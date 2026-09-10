@@ -83,9 +83,11 @@ def _make_unpitched(pitch, ql, stem):
     return u
 
 
-def _fill_voice(slots_for_voice, base, slots_per_measure, QL, stem):
+def _fill_voice(slots_for_voice, base, slots_per_measure, QL, stem, hide_rests=False):
     """Build one Voice stream spanning the whole measure: notes where this voice
-    plays, merged rests elsewhere. slots_for_voice: {slot_index_within_measure: [pitches]}"""
+    plays, merged rests elsewhere. slots_for_voice: {slot_index_within_measure: [pitches]}
+    hide_rests=True marks all rests as print-object="no" (used for the feet voice so the
+    staff isn't cluttered with a second layer of rests)."""
     v = stream.Voice()
     s = 0
     while s < slots_per_measure:
@@ -112,14 +114,13 @@ def _fill_voice(slots_for_voice, base, slots_per_measure, QL, stem):
                     if c <= remaining and pos % c == 0:
                         chunk = c
                         break
-                v.append(note.Rest(quarterLength=QL * chunk))
+                r = note.Rest(quarterLength=QL * chunk)
+                if hide_rests:
+                    r.style.hideObjectOnPrint = True
+                v.append(r)
                 pos += chunk
                 remaining -= chunk
             s += run
-    try:
-        v.makeBeams(inPlace=True)
-    except Exception:
-        pass
     return v
 
 
@@ -194,10 +195,16 @@ def build_drum_score(midi_path, bpm=None, max_measures=200, title=None, difficul
                 f_local[s] = feet[slot]
         v1 = _fill_voice(h_local, base, slots_per_measure, QL, "up")
         v1.id = "1"
-        v2 = _fill_voice(f_local, base, slots_per_measure, QL, "down")
+        v2 = _fill_voice(f_local, base, slots_per_measure, QL, "down", hide_rests=True)
         v2.id = "2"
         meas.insert(0, v1)
         meas.insert(0, v2)
+        # beams must be made on the Measure (Voice.makeBeams raises); this connects
+        # consecutive 8th/16th notes into top/bottom beam groups per voice.
+        try:
+            meas.makeBeams(inPlace=True)
+        except Exception:
+            pass
         part.append(meas)
 
     sc.insert(0, part)

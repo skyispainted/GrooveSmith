@@ -102,13 +102,13 @@
 
   .stage{flex:1;overflow:auto;padding:22px;background:
     radial-gradient(900px 400px at 70% -20%,#141d31 0,var(--bg) 60%);}
-  .score{background:#fff;border-radius:12px;padding:16px;box-shadow:0 10px 40px rgba(0,0,0,.4);
+  .score{position:relative;background:#fff;border-radius:12px;padding:16px;box-shadow:0 10px 40px rgba(0,0,0,.4);
     max-width:1100px;margin:0 auto;overflow:auto;}
   .score svg{max-width:100%;height:auto;display:block;margin:0 auto;}
-  /* playback highlight: color the currently-sounding note (cheap: direct children only) */
-  .score svg g.aj-hl>.notehead>use,
-  .score svg g.aj-hl>.notehead>g>use{ fill:#e11d48; }
-  .score svg g.aj-hl>.notehead{ fill:#e11d48; }
+  /* playback cursor: a translucent bar moved via transform (GPU-composited, no reflow) */
+  #hlCursor{position:absolute;left:0;top:0;width:64px;height:34px;pointer-events:none;
+    background:rgba(225,29,72,.28);border-left:2px solid #e11d48;border-radius:3px;
+    transform:translate(-9999px,0);will-change:transform;display:none;z-index:5;}
   .empty{display:grid;place-items:center;height:100%;color:var(--dim);text-align:center;}
   .empty .big{font-size:44px;opacity:.5;} .empty .t{margin-top:12px;font-size:14px;}
 
@@ -238,7 +238,7 @@
     </div>
 
     <div class="stage">
-      <div class="score hidden" id="scoreWrap"><div id="preview"></div></div>
+      <div class="score hidden" id="scoreWrap"><div id="hlCursor"></div><div id="preview"></div></div>
       <div class="empty" id="emptyState">
         <div>
           <div class="big">🥁</div>
@@ -432,13 +432,14 @@ async function loadTimemap(url){
   }catch(e){ timemap=[]; }
   buildNoteCache();
 }
-/* cache each note's SVG-space y once (from notehead <use transform="translate(x,y)">),
-   so the rAF loop never calls getBoundingClientRect (which forces layout on a huge SVG). */
-let noteXY={}, svgScale=0, svgEl=null;
+/* cache each note's SVG-space x/y once; compute svg->pixel scale and the svg's
+   offset within the .score box ONCE. The rAF loop then only moves a cursor overlay
+   via transform (GPU-composited: no reflow, no style recalc on the big SVG). */
+let noteXY={}, svgScale=0, svgEl=null, svgOffX=0, svgOffY=0;
 function buildNoteCache(){
-  noteXY={}; svgScale=0;
-  const box=document.querySelector('.stage'); if(!box) return;
-  svgEl=box.querySelector('svg'); if(!svgEl) return;
+  noteXY={}; svgScale=0; svgOffX=0; svgOffY=0;
+  const scoreBox=document.getElementById('scoreWrap'); if(!scoreBox) return;
+  svgEl=scoreBox.querySelector('svg'); if(!svgEl) return;
   const notes=svgEl.querySelectorAll('g.note');
   const re=/translate\(\s*([\-0-9.]+)[ ,]+([\-0-9.]+)/;
   notes.forEach(n=>{
@@ -447,45 +448,45 @@ function buildNoteCache(){
     const t=u.getAttribute('transform')||''; const m=t.match(re);
     if(m) noteXY[n.id]={x:+m[1], y:+m[2]};
   });
-  // svg-units -> rendered pixels scale (measured ONCE)
   try{
     const vb=svgEl.viewBox&&svgEl.viewBox.baseVal;
     const rect=svgEl.getBoundingClientRect();
-    if(vb && vb.height>0) svgScale=rect.height/vb.height;
-    else{
-      const hAttr=parseFloat(svgEl.getAttribute('height'))||0;
-      if(hAttr>0) svgScale=rect.height/hAttr;
-    }
+    const boxRect=scoreBox.getBoundingClientRect();
+    let unitH=(vb&&vb.height>0)?vb.height:(parseFloat(svgEl.getAttribute('height'))||0);
+    if(unitH>0) svgScale=rect.height/unitH;
+    // svg top-left relative to the scrollable .score content box (account for scroll)
+    svgOffX=(rect.left-boxRect.left)+scoreBox.scrollLeft;
+    svgOffY=(rect.top-boxRect.top)+scoreBox.scrollTop;
   }catch(e){ svgScale=0; }
 }
 function clearHighlight(){
-  for(const id of hlIds){ const el=document.getElementById(id); if(el) el.classList.remove('aj-hl'); }
-  hlIds=[];
+  const c=document.getElementById('hlCursor'); if(c){ c.style.display='none'; c.style.transform='translate(-9999px,0)'; }
 }
 let lastScrollT=0, curIdx=-1;
 function highlightAt(ms){
   if(!timemap.length) return;
   let lo=0,hi=timemap.length-1,idx=-1;
   while(lo<=hi){ const m=(lo+hi)>>1; if(timemap[m].t<=ms){ idx=m; lo=m+1; } else hi=m-1; }
-  if(idx===curIdx) return;      // nothing changed this frame -> do nothing (no reflow)
+  if(idx===curIdx) return;      // position unchanged -> nothing to do
   curIdx=idx;
-  if(idx<0){ if(hlIds.length) clearHighlight(); return; }
-  const ids=timemap[idx].on;
-  clearHighlight();
-  let firstId=null;
-  for(const id of ids){ const el=document.getElementById(id); if(el){ el.classList.add('aj-hl'); hlIds.push(id); if(!firstId) firstId=id; } }
-  // auto-scroll using CACHED svg-space y -> pixels (no getBoundingClientRect per change)
-  if(firstId && noteXY[firstId] && svgScale>0){
-    const now=performance.now();
-    if(now-lastScrollT>350){
-      const box=document.querySelector('.stage');
-      if(box){
-        const yPx=noteXY[firstId].y*svgScale;                 // note y within svg, in px
-        const target=yPx - box.clientHeight*0.4;              // put note ~40% down
-        if(Math.abs(box.scrollTop-target)>box.clientHeight*0.5){
-          box.scrollTop=Math.max(0,target); lastScrollT=now;
-        }
-      }
+  if(idx<0){ clearHighlight(); return; }
+  // representative note of this beat (first id)
+  let firstId=null; const ids=timemap[idx].on;
+  for(const id of ids){ if(noteXY[id]){ firstId=id; break; } }
+  const c=document.getElementById('hlCursor');
+  if(!firstId || !svgScale || !c){ return; }
+  const nx=noteXY[firstId].x*svgScale + svgOffX;
+  const ny=noteXY[firstId].y*svgScale + svgOffY;
+  // move the cursor bar (compositor only). center it vertically on the note line.
+  c.style.display='block';
+  c.style.transform='translate('+(nx-18)+'px,'+(ny-24)+'px)';
+  // keep the current position in view (cheap: use cached ny, throttled)
+  const now=performance.now();
+  if(now-lastScrollT>350){
+    const box=document.querySelector('.stage');
+    if(box){
+      const target=ny - box.clientHeight*0.4;
+      if(Math.abs(box.scrollTop-target)>box.clientHeight*0.5){ box.scrollTop=Math.max(0,target); lastScrollT=now; }
     }
   }
 }
@@ -531,10 +532,26 @@ function tick(){
 }
 function onSeekInput(){ seeking=true; const {dur}=curDur();
   document.getElementById('tCur').textContent=fmtTime(+document.getElementById('seekBar').value/1000*dur); }
-function onSeekCommit(){ const {dur}=curDur(); const v=+document.getElementById('seekBar').value/1000*dur;
-  const a=document.getElementById('origAudio');
-  try{ if(hasOrig && a.src && isFinite(a.duration)) a.currentTime=v; }catch(e){}
-  try{ if(activeMp) activeMp.currentTime=v; }catch(e){} seeking=false; }
+function onSeekCommit(){
+  const {dur}=curDur(); const v=+document.getElementById('seekBar').value/1000*dur;
+  const a=document.getElementById('origAudio'); const mp=activeMp;
+  const playing=document.getElementById('btnPlay').dataset.playing==='1';
+  if(hasOrig){
+    // original audio is the master clock; MIDI follows at (v - offset)
+    try{ if(a.src && isFinite(a.duration)) a.currentTime=Math.max(0,Math.min(v,a.duration)); }catch(e){}
+    const mtarget=Math.max(0, v - offsetMs/1000);
+    // html-midi-player only seeks when playing (currentTime setter calls seekTo only if isPlaying)
+    try{ if(mp && playing) mp.currentTime=mtarget; }catch(e){}
+    pendingMidiSeek = playing ? null : mtarget;   // if paused, apply on next play
+  }else{
+    // import mode: MIDI is the master
+    try{ if(mp && playing) mp.currentTime=v; }catch(e){}
+    pendingMidiSeek = playing ? null : v;
+  }
+  curIdx=-1;                 // force highlight refresh at new position
+  seeking=false;
+}
+let pendingMidiSeek=null;
 function setPlay(on){ const b=document.getElementById('btnPlay'); b.textContent=on?'⏸':'▶'; b.dataset.playing=on?'1':''; }
 function onPlayClick(){ if(mode==='gen') togglePlay(); else toggleImpPlay(); }
 async function togglePlay(){
@@ -543,11 +560,17 @@ async function togglePlay(){
   try{ if(window.Tone) await Tone.start(); }catch(e){}
   const g=ensureAudioGraph(); try{ if(g&&g.ctx.state==='suspended') await g.ctx.resume(); }catch(e){}
   applyVolumes();
-  a.currentTime=0;
+  // start from current seek position (respects a paused drag); default 0
+  const dur=(isFinite(a.duration)&&a.duration>0)?a.duration:0;
+  let startSec = dur>0 ? (+document.getElementById('seekBar').value/1000*dur) : 0;
+  if(pendingMidiSeek!=null && !dur) startSec=0;
+  try{ a.currentTime=Math.max(0,startSec); }catch(e){}
   try{ await mp.start(); }catch(e){}
   try{ await a.play(); }catch(e){}
-  // apply alignment offset: MIDI position = audioTime - offset
-  try{ mp.currentTime = Math.max(0, -offsetMs/1000); }catch(e){}
+  // align MIDI to audioTime - offset (mp seeks only once playing)
+  const mtarget = Math.max(0, (pendingMidiSeek!=null?pendingMidiSeek:(startSec - offsetMs/1000)));
+  try{ mp.currentTime = mtarget; }catch(e){}
+  pendingMidiSeek=null;
   setPlay(true); startHlLoop();
 }
 function stopAll(){ const mp=document.getElementById('mp'),a=document.getElementById('origAudio');
@@ -589,7 +612,10 @@ async function toggleImpPlay(){
   const mp=document.getElementById('mpImp'),b=document.getElementById('btnPlay');
   if(b.dataset.playing==='1'){ try{mp.stop();}catch(e){} setPlay(false); stopHlLoop(); clearHighlight(); return; }
   try{ if(window.Tone) await Tone.start(); }catch(e){}
-  applyImpVol(); try{ await mp.start(); }catch(e){} setPlay(true); startHlLoop();
+  applyImpVol();
+  try{ await mp.start(); }catch(e){}
+  if(pendingMidiSeek!=null){ try{ mp.currentTime=pendingMidiSeek; }catch(e){} pendingMidiSeek=null; }
+  setPlay(true); startHlLoop();
 }
 function stopImp(){ const mp=document.getElementById('mpImp'); try{mp.stop();}catch(e){} stopHlLoop(); clearHighlight(); }
 function applyImpVol(){ const v=+document.getElementById('volImp').value;

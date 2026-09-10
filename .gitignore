@@ -20,3 +20,11 @@ Thumbs.db
 # python cache
 __pycache__/
 *.pyc
+
+# scratch / diagnostic one-offs at repo root (not part of the app)
+/*.txt
+/getlog.sh
+/repro.sh
+/gp.sh
+/gitstate.sh
+/gitpush.sh

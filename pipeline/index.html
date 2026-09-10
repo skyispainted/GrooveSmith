@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0b0e14">
 <title>GrooveSmith · 鼓谱工作台</title>
+<!-- Background-safe timers. Chrome throttles timers in a HIDDEN tab to ~1/s, which
+     starves <midi-player>'s note scheduler while <audio> keeps playing. Must load
+     BEFORE midi-player.js so the player picks up the shim. -->
+<script src="/static/bg-timers.js"></script>
 <script src="/static/midi-player.js"></script>
 <style>
   :root{
@@ -260,6 +264,12 @@
 <midi-player id="mp" sound-font="/static/soundfonts/sgm_plus" style="display:none"></midi-player>
 <midi-player id="mpImp" sound-font="/static/soundfonts/sgm_plus" style="display:none"></midi-player>
 <audio id="origAudio" preload="metadata" crossorigin="anonymous" style="display:none"></audio>
+<!-- Score audio: the same drum samples, rendered server-side to an mp3.
+     Played through <audio> rather than <midi-player> because the player schedules
+     notes from main-thread timers, which Chrome throttles to ~1/s in a hidden tab --
+     so synthesised playback used to stop the moment the page was backgrounded, while
+     the original track kept going. Media playback is immune, and gains media controls. -->
+<audio id="scoreAudio" preload="metadata" crossorigin="anonymous" style="display:none"></audio>
 
 <script>
 let mode='gen';
@@ -346,15 +356,14 @@ function poll(job_id,btn){
 async function showResult(job_id){
   currentJob=job_id;
   if(uploadTitle) document.getElementById('mainTitle').textContent = uploadTitle;
-  preloadSoundfont();
   document.getElementById('dlGrp').classList.remove('hidden');
   document.getElementById('dlLinks').innerHTML=['midi','musicxml','pdf','png'].map(n=>
     '<a href="/api/file/'+job_id+'/'+n+'" download>⬇ '+n+'</a>').join('');
   const svg=await(await fetch('/api/svg/'+job_id)).text(); showPreview(svg);
   document.getElementById('playGrp').classList.remove('hidden');
   document.getElementById('transport').classList.remove('hidden');
-  const mp=document.getElementById('mp'); mp.src='/api/midi/'+job_id;
-  activeMp=mp; activeSeek='seekBar';
+  const sc=document.getElementById('scoreAudio'); sc.src='/api/audio/'+job_id+'/score';
+  activeMp=sc; activeSeek='seekBar';
   pickSrc('original'); applyVolumes(); applyOffset(); wireProgress();
 }
 function pickSrc(kind){
@@ -381,7 +390,9 @@ function applyVolumes(){
   document.getElementById('volMidiVal').textContent=vm;
   document.getElementById('volOrigVal').textContent=vo;
   document.getElementById('volMasterVal').textContent=vmaster;
-  try{ if(window.Tone) Tone.getDestination().volume.value=pctToDb(vm/100*vmaster/100*100); }catch(e){}
+  // score audio is a plain <audio> now, so its gain is just .volume
+  const scv=document.getElementById('scoreAudio');
+  if(scv) scv.volume=Math.max(0,Math.min(1,vm/100*vmaster/100));
   const oe=Math.max(0,Math.min(1,vo/100*vmaster/100)); const g=ensureAudioGraph();
   if(g&&g.origGain){ g.origGain.gain.value=oe; document.getElementById('origAudio').volume=1; }
   else document.getElementById('origAudio').volume=oe;
@@ -478,8 +489,8 @@ let pendingMidiSeek=null;
 function setPlay(on){ const b=document.getElementById('btnPlay'); b.textContent=on?'⏸':'▶'; b.dataset.playing=on?'1':''; }
 function onPlayClick(){ if(mode==='gen') togglePlay(); else toggleImpPlay(); }
 async function togglePlay(){
-  const mp=document.getElementById('mp'), a=document.getElementById('origAudio'), b=document.getElementById('btnPlay');
-  if(b.dataset.playing==='1'){ try{mp.stop();}catch(e){} a.pause(); setPlay(false); return; }
+  const sc=document.getElementById('scoreAudio'), a=document.getElementById('origAudio'), b=document.getElementById('btnPlay');
+  if(b.dataset.playing==='1'){ try{sc.pause();}catch(e){} a.pause(); setPlay(false); return; }
   try{ if(window.Tone) await Tone.start(); }catch(e){}
   const g=ensureAudioGraph(); try{ if(g&&g.ctx.state==='suspended') await g.ctx.resume(); }catch(e){}
   applyVolumes();
@@ -487,17 +498,19 @@ async function togglePlay(){
   const dur=(isFinite(a.duration)&&a.duration>0)?a.duration:0;
   let startSec = dur>0 ? (+document.getElementById('seekBar').value/1000*dur) : 0;
   if(pendingMidiSeek!=null && !dur) startSec=0;
-  try{ a.currentTime=Math.max(0,startSec); }catch(e){}
-  try{ await mp.start(); }catch(e){}
-  try{ await a.play(); }catch(e){}
-  // align MIDI to audioTime - offset (mp seeks only once playing)
+  // score follows the original at (audioTime - offset)
   const mtarget = Math.max(0, (pendingMidiSeek!=null?pendingMidiSeek:(startSec - offsetMs/1000)));
-  try{ mp.currentTime = mtarget; }catch(e){}
+  try{ a.currentTime=Math.max(0,startSec); }catch(e){}
+  try{ sc.currentTime=mtarget; }catch(e){}
+  try{ await a.play(); }catch(e){}
+  try{ await sc.play(); }catch(e){}
   pendingMidiSeek=null;
   setPlay(true);
 }
-function stopAll(){ const mp=document.getElementById('mp'),a=document.getElementById('origAudio');
-  try{mp.stop();}catch(e){} a.pause(); a.currentTime=0; setPlay(false); }
+function stopAll(){ const mp=document.getElementById('mp'), sc=document.getElementById('scoreAudio'),
+  a=document.getElementById('origAudio');
+  try{mp.stop();}catch(e){} try{sc.pause(); sc.currentTime=0;}catch(e){}
+  a.pause(); a.currentTime=0; setPlay(false); }
 
 /* ---------------- import ---------------- */
 let currentImp=null;

@@ -137,13 +137,13 @@ def worker(job_id, audio_path):
     with PROC_LOCK:
         try:
             set_job(job_id, status="running", progress=5, stage="separation")
-            add_log(job_id, "STAGE 1/4 separation (Demucs)")
+            add_log(job_id, "STAGE 1/5 separation (Demucs)")
             drums = pl.separate(audio_path, jd, DEVICE)
             set_job(job_id, progress=45, stage="transcription")
-            add_log(job_id, "STAGE 2/4 transcription (ADTOF)")
+            add_log(job_id, "STAGE 2/5 transcription (ADTOF)")
             mid = pl.transcribe(drums, jd, DEVICE)
             set_job(job_id, progress=70, stage="musicxml")
-            add_log(job_id, "STAGE 3/4 MIDI -> MusicXML (music21)")
+            add_log(job_id, "STAGE 3/5 MIDI -> MusicXML (music21)")
             bpm = pl.estimate_bpm(drums)
             add_log(job_id, "estimated bpm = " + str(bpm))
             with LOCK:
@@ -154,14 +154,24 @@ def worker(job_id, audio_path):
             add_log(job_id, "difficulty = " + difficulty)
             xml = pl.to_musicxml(mid, jd, bpm=bpm, title=title, difficulty=difficulty)
             set_job(job_id, progress=85, stage="render")
-            add_log(job_id, "STAGE 4/4 render (verovio + cairosvg)")
+            add_log(job_id, "STAGE 4/5 render (verovio + cairosvg)")
             svg, pdf, png = pl.render(xml, jd)
             timemap = os.path.join(jd, "timemap.json")
+            # Render the score to audio so the page can play it through an <audio>
+            # element. <midi-player> schedules notes from main-thread timers, which
+            # Chrome throttles to ~1/s in a hidden tab, so synthesised playback dies
+            # in the background while <audio> keeps going.
+            add_log(job_id, "STAGE 5/5 score audio (drum samples)")
+            try:
+                score = pl.render_score_audio(mid, jd)
+            except Exception as e:
+                add_log(job_id, "score audio failed: " + repr(e))
+                score = None
             add_log(job_id, "done")
             set_job(job_id, status="done", progress=100, stage="done",
                     outputs={"midi": mid, "musicxml": xml, "svg": svg, "pdf": pdf,
                              "png": png, "original": audio_path, "drums": drums,
-                             "timemap": timemap, "title": title})
+                             "score": score, "timemap": timemap, "title": title})
         except Exception as e:
             add_log(job_id, "ERROR: " + repr(e))
             add_log(job_id, traceback.format_exc())
@@ -236,9 +246,9 @@ async def get_timemap(job_id: str):
 
 @app.get("/api/audio/{job_id}/{kind}")
 async def get_audio(job_id: str, kind: str, request: Request):
-    """kind = original (uploaded mix) | drums (separated drum stem)."""
-    if kind not in ("original", "drums"):
-        raise HTTPException(400, "kind must be original or drums")
+    """kind = original (uploaded mix) | drums (separated stem) | score (rendered drums)."""
+    if kind not in ("original", "drums", "score"):
+        raise HTTPException(400, "kind must be original, drums or score")
     with LOCK:
         j = JOBS.get(job_id)
     if not j or j.get("status") != "done":

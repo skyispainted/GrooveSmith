@@ -25,9 +25,26 @@ def run(cmd):
     subprocess.run(cmd, check=True)
 
 
+def _run_with_cpu_fallback(build_cmd, device):
+    """Run a command on the requested device; if it was cuda and failed, retry on cpu.
+    build_cmd(dev) -> list[str]."""
+    try:
+        run(build_cmd(device))
+        return device
+    except subprocess.CalledProcessError as e:
+        if device == "cuda":
+            log("cuda run failed (%r); falling back to CPU" % e)
+            run(build_cmd("cpu"))
+            return "cpu"
+        raise
+
+
 def separate(inp, outdir, device):
     demucs_out = os.path.join(outdir, "demucs")
-    run(["demucs", "-d", device, "-n", "htdemucs", "-o", demucs_out, inp])
+    _run_with_cpu_fallback(
+        lambda d: ["demucs", "-d", d, "-n", "htdemucs", "-o", demucs_out, inp],
+        device,
+    )
     stem = os.path.splitext(os.path.basename(inp))[0]
     hits = glob.glob(os.path.join(demucs_out, "htdemucs", stem, "drums.wav"))
     if not hits:
@@ -37,7 +54,10 @@ def separate(inp, outdir, device):
 
 def transcribe(drums_wav, outdir, device):
     mid = os.path.join(outdir, "drums.mid")
-    run(["adtof", "--audio", drums_wav, "--out", mid, "--device", device])
+    _run_with_cpu_fallback(
+        lambda d: ["adtof", "--audio", drums_wav, "--out", mid, "--device", d],
+        device,
+    )
     return mid
 
 

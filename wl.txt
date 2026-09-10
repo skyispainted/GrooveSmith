@@ -1,6 +1,0 @@
-web-gpu-1  | INFO:     172.22.0.1:40710 - "GET /api/status/efc865f2b1f2 HTTP/1.1" 200 OK
-web-gpu-1  | INFO:     172.22.0.1:40718 - "GET /api/status/efc865f2b1f2 HTTP/1.1" 200 OK
-web-gpu-1  | INFO:     172.22.0.1:54106 - "GET /api/status/efc865f2b1f2 HTTP/1.1" 200 OK
-web-gpu-1  | INFO:     172.22.0.1:54108 - "GET /api/status/efc865f2b1f2 HTTP/1.1" 200 OK
-web-gpu-1  | INFO:     172.22.0.1:54114 - "GET /api/status/efc865f2b1f2 HTTP/1.1" 200 OK
-web-gpu-1  | INFO:     172.22.0.1:54130 - "GET /api/status/efc865f2b1f2 HTTP/1.1" 200 OK

@@ -1,6 +1,6 @@
-job=efc865f2b1f2
+job=3d6fce037ce1
 final=done
-=== LOGS ===
+status: done stage: done
 STAGE 1/4 separation (Demucs)
 STAGE 2/4 transcription (ADTOF)
 STAGE 3/4 MIDI -> MusicXML (music21)

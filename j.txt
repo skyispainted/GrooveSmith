@@ -1,4 +1,0 @@
-total 4240
-drwxrwxrwx 1 hbc hbc    4096 Sep 10 14:18 .
-drwxrwxrwx 1 hbc hbc    4096 Sep 10 14:18 ..
--rwxrwxrwx 1 hbc hbc 4338538 Sep 10 14:18 input.mp3

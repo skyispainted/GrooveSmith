@@ -5,6 +5,9 @@ FROM pytorch/pytorch:2.3.1-cuda12.1-cudnn8-runtime
 # proxy is used ONLY for pip/git (github, pypi). apt goes direct to ubuntu mirrors.
 ARG PIP_PROXY=
 ENV DEBIAN_FRONTEND=noninteractive PIP_NO_CACHE_DIR=1 PYTHONUNBUFFERED=1 DEVICE=cuda
+# Fix: Intel MKL threading layer clashes with GNU libgomp in the conda pytorch image
+# (demucs/torch fail with "MKL_THREADING_LAYER=INTEL is incompatible with libgomp.so.1").
+ENV MKL_THREADING_LAYER=GNU MKL_SERVICE_FORCE_INTEL=0
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ffmpeg libsndfile1 git ca-certificates libcairo2 \

@@ -1,0 +1,71 @@
+=== job 21ca3ab106ba logs ===
+status: error stage: error
+STAGE 1/4 separation (Demucs)
+ERROR: CalledProcessError(1, ['demucs', '-d', 'cpu', '-n', 'htdemucs', '-o', '/data/jobs/21ca3ab106ba/demucs', '/data/jobs/21ca3ab106ba/input.mp3'])
+Traceback (most recent call last):
+  File "/work/run_pipeline.py", line 36, in _run_with_cpu_fallback
+    run(build_cmd(device))
+  File "/work/run_pipeline.py", line 29, in run
+    raise subprocess.CalledProcessError(proc.returncode, cmd, output=proc.stdout)
+subprocess.CalledProcessError: Command '['demucs', '-d', 'cuda', '-n', 'htdemucs', '-o', '/data/jobs/21ca3ab106ba/demucs', '/data/jobs/21ca3ab106ba/input.mp3']' returned non-zero exit status 1.
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/work/webapp.py", line 85, in worker
+    drums = pl.separate(audio_path, jd, DEVICE)
+  File "/work/run_pipeline.py", line 48, in separate
+    _run_with_cpu_fallback(
+  File "/work/run_pipeline.py", line 41, in _run_with_cpu_fallback
+    run(build_cmd("cpu"))
+  File "/work/run_pipeline.py", line 29, in run
+    raise subprocess.CalledProcessError(proc.returncode, cmd, output=proc.stdout)
+subprocess.CalledProcessError: Command '['demucs', '-d', 'cpu', '-n', 'htdemucs', '-o', '/data/jobs/21ca3ab106ba/demucs', '/data/jobs/21ca3ab106ba/input.mp3']' returned non-zero exit status 1.
+
+=== web-gpu container logs (tail 80) ===
+web-gpu-1  | INFO:     Started server process [1]
+web-gpu-1  | INFO:     Waiting for application startup.
+web-gpu-1  | INFO:     Application startup complete.
+web-gpu-1  | INFO:     Uvicorn running on http://0.0.0.0:8080 (Press CTRL+C to quit)
+web-gpu-1  | [audio-jam] run: demucs -d cuda -n htdemucs -o /data/jobs/efc865f2b1f2/demucs /data/jobs/efc865f2b1f2/input.mp3
+web-gpu-1  | INFO:     172.22.0.1:52842 - "POST /api/upload HTTP/1.1" 200 OK
+web-gpu-1  | INFO:     172.22.0.1:52854 - "GET /api/status/efc865f2b1f2 HTTP/1.1" 200 OK
+web-gpu-1  | INFO:     172.22.0.1:52866 - "GET /api/status/efc865f2b1f2 HTTP/1.1" 200 OK
+web-gpu-1  | INFO:     172.22.0.1:48318 - "GET /api/status/efc865f2b1f2 HTTP/1.1" 200 OK
+web-gpu-1  | INFO:     172.22.0.1:48334 - "GET /api/status/efc865f2b1f2 HTTP/1.1" 200 OK
+web-gpu-1  | INFO:     172.22.0.1:48350 - "GET /api/status/efc865f2b1f2 HTTP/1.1" 200 OK
+web-gpu-1  | INFO:     172.22.0.1:50196 - "GET /api/status/efc865f2b1f2 HTTP/1.1" 200 OK
+web-gpu-1  | INFO:     172.22.0.1:50210 - "GET /api/status/efc865f2b1f2 HTTP/1.1" 200 OK
+web-gpu-1  | INFO:     172.22.0.1:50220 - "GET /api/status/efc865f2b1f2 HTTP/1.1" 200 OK
+web-gpu-1  | INFO:     172.22.0.1:48134 - "GET /api/status/efc865f2b1f2 HTTP/1.1" 200 OK
+web-gpu-1  | INFO:     172.22.0.1:48140 - "GET /api/status/efc865f2b1f2 HTTP/1.1" 200 OK
+web-gpu-1  | [audio-jam] run: adtof --audio /data/jobs/efc865f2b1f2/demucs/htdemucs/input/drums.wav --out /data/jobs/efc865f2b1f2/drums.mid --device cuda
+web-gpu-1  | INFO:     172.22.0.1:48142 - "GET /api/status/efc865f2b1f2 HTTP/1.1" 200 OK
+web-gpu-1  | INFO:     172.22.0.1:47262 - "GET /api/status/efc865f2b1f2 HTTP/1.1" 200 OK
+web-gpu-1  | INFO:     172.22.0.1:47272 - "GET /api/status/efc865f2b1f2 HTTP/1.1" 200 OK
+web-gpu-1  | INFO:     172.22.0.1:47278 - "GET /api/status/efc865f2b1f2 HTTP/1.1" 200 OK
+web-gpu-1  | INFO:     172.22.0.1:47282 - "GET /api/status/efc865f2b1f2 HTTP/1.1" 200 OK
+web-gpu-1  | INFO:     172.22.0.1:55792 - "GET /api/status/efc865f2b1f2 HTTP/1.1" 200 OK
+web-gpu-1  | INFO:     172.22.0.1:55796 - "GET /api/status/efc865f2b1f2 HTTP/1.1" 200 OK
+web-gpu-1  | INFO:     172.22.0.1:55812 - "GET /api/status/efc865f2b1f2 HTTP/1.1" 200 OK
+web-gpu-1  | INFO:     172.22.0.1:40694 - "GET /api/status/efc865f2b1f2 HTTP/1.1" 200 OK
+web-gpu-1  | INFO:     172.22.0.1:40710 - "GET /api/status/efc865f2b1f2 HTTP/1.1" 200 OK
+web-gpu-1  | INFO:     172.22.0.1:40718 - "GET /api/status/efc865f2b1f2 HTTP/1.1" 200 OK
+web-gpu-1  | INFO:     172.22.0.1:54106 - "GET /api/status/efc865f2b1f2 HTTP/1.1" 200 OK
+web-gpu-1  | INFO:     172.22.0.1:54108 - "GET /api/status/efc865f2b1f2 HTTP/1.1" 200 OK
+web-gpu-1  | INFO:     172.22.0.1:54114 - "GET /api/status/efc865f2b1f2 HTTP/1.1" 200 OK
+web-gpu-1  | INFO:     172.22.0.1:54130 - "GET /api/status/efc865f2b1f2 HTTP/1.1" 200 OK
+web-gpu-1  | [audio-jam] run: demucs -d cuda -n htdemucs -o /data/jobs/21ca3ab106ba/demucs /data/jobs/21ca3ab106ba/input.mp3
+web-gpu-1  | INFO:     172.22.0.1:39358 - "POST /api/upload HTTP/1.1" 200 OK
+web-gpu-1  | [audio-jam] command failed (exit 1):
+web-gpu-1  | Error: mkl-service + Intel(R) MKL: MKL_THREADING_LAYER=INTEL is incompatible with libgomp.so.1 library.
+web-gpu-1  | 	Try to import numpy first or set the threading layer accordingly. Set MKL_SERVICE_FORCE_INTEL to force it.
+web-gpu-1  | [audio-jam] cuda run failed (CalledProcessError(1, ['demucs', '-d', 'cuda', '-n', 'htdemucs', '-o', '/data/jobs/21ca3ab106ba/demucs', '/data/jobs/21ca3ab106ba/input.mp3'])); falling back to CPU
+web-gpu-1  | [audio-jam] run: demucs -d cpu -n htdemucs -o /data/jobs/21ca3ab106ba/demucs /data/jobs/21ca3ab106ba/input.mp3
+web-gpu-1  | INFO:     172.22.0.1:39358 - "GET /api/status/21ca3ab106ba HTTP/1.1" 200 OK
+web-gpu-1  | [audio-jam] command failed (exit 1):
+web-gpu-1  | Error: mkl-service + Intel(R) MKL: MKL_THREADING_LAYER=INTEL is incompatible with libgomp.so.1 library.
+web-gpu-1  | 	Try to import numpy first or set the threading layer accordingly. Set MKL_SERVICE_FORCE_INTEL to force it.
+web-gpu-1  | INFO:     172.22.0.1:39358 - "GET /api/status/21ca3ab106ba HTTP/1.1" 200 OK
+web-gpu-1  | INFO:     172.22.0.1:48912 - "GET /api/status/21ca3ab106ba HTTP/1.1" 200 OK
+web-gpu-1  | INFO:     172.22.0.1:34872 - "GET /api/status/21ca3ab106ba HTTP/1.1" 200 OK

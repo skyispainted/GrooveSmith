@@ -42,19 +42,17 @@ services:
     entrypoint: ["uvicorn", "webapp:app", "--host", "0.0.0.0", "--port", "8080"]
 
   # ---- GPU (optional). Requires nvidia-container-toolkit on host. ----
-  # Build image with cu121 torch, run with GPU reservation.
-  #   docker compose --profile gpu build
-  #   docker compose --profile gpu run --rm pipeline-gpu --input /data/input/song.wav
+  # Uses the official pytorch CUDA image (torch pre-baked) to avoid huge wheel downloads.
+  #   BUILD_PROXY=http://172.20.128.1:20808 docker compose --profile gpu build
+  #   docker compose --profile gpu run --rm pipeline-gpu --input /data/input/song.mp3
   pipeline-gpu:
     profiles: [gpu]
     build:
       context: ./pipeline
-      dockerfile: Dockerfile.base
+      dockerfile: Dockerfile.gpu
       args:
-        TORCH_VARIANT: cu121
-        HTTP_PROXY: ${BUILD_PROXY:-}
-        HTTPS_PROXY: ${BUILD_PROXY:-}
-    image: audiojam-base:cu121
+        PIP_PROXY: ${BUILD_PROXY:-}
+    image: audiojam-base:gpu
     environment:
       DEVICE: cuda
     volumes:
@@ -67,3 +65,29 @@ services:
               count: all
               capabilities: [gpu]
     command: [--input, /data/input/test_drums.wav, --outdir, /data/output, --device, cuda]
+
+  # ---- WebUI on GPU ----
+  #   docker compose --profile gpu up -d web-gpu   then open http://localhost:8080
+  web-gpu:
+    profiles: [gpu]
+    build:
+      context: ./pipeline
+      dockerfile: Dockerfile.gpu
+      args:
+        PIP_PROXY: ${BUILD_PROXY:-}
+    image: audiojam-base:gpu
+    environment:
+      DEVICE: cuda
+      DATA_ROOT: /data
+    volumes:
+      - ./data:/data
+    ports:
+      - "8080:8080"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    entrypoint: ["uvicorn", "webapp:app", "--host", "0.0.0.0", "--port", "8080"]

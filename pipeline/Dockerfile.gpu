@@ -1,0 +1,29 @@
+# GPU image: torch is already baked into the official PyTorch CUDA image, so we
+# avoid downloading the multi-GB torch wheel through a flaky proxy.
+FROM pytorch/pytorch:2.3.1-cuda12.1-cudnn8-runtime
+
+# proxy is used ONLY for pip/git (github, pypi). apt goes direct to ubuntu mirrors.
+ARG PIP_PROXY=
+ENV DEBIAN_FRONTEND=noninteractive PIP_NO_CACHE_DIR=1 PYTHONUNBUFFERED=1 DEVICE=cuda
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ffmpeg libsndfile1 git ca-certificates libcairo2 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --proxy "$PIP_PROXY" --timeout 120 --retries 8 "numpy<2"
+RUN pip install --proxy "$PIP_PROXY" --timeout 120 --retries 8 "soundfile==0.12.1" "pretty_midi==0.2.10"
+RUN pip install --proxy "$PIP_PROXY" --timeout 120 --retries 8 "librosa==0.10.2.post1"
+RUN pip install --proxy "$PIP_PROXY" --timeout 120 --retries 8 "demucs==4.0.1"
+RUN git config --global http.proxy "$PIP_PROXY" && git config --global https.proxy "$PIP_PROXY" && \
+    pip install --proxy "$PIP_PROXY" --timeout 120 --retries 8 "git+https://github.com/xavriley/ADTOF-pytorch.git" ; \
+    git config --global --unset http.proxy ; git config --global --unset https.proxy ; true
+RUN pip install --proxy "$PIP_PROXY" --timeout 120 --retries 8 "music21==9.1.0" verovio cairosvg
+RUN pip install --proxy "$PIP_PROXY" --timeout 120 --retries 8 "fastapi==0.111.0" "uvicorn[standard]==0.30.1" "python-multipart==0.0.9"
+
+WORKDIR /work
+COPY run_pipeline.py /work/run_pipeline.py
+COPY drum_notation.py /work/drum_notation.py
+COPY webapp.py /work/webapp.py
+COPY index.html /work/index.html
+COPY static /work/static
+ENTRYPOINT ["python", "/work/run_pipeline.py"]

@@ -160,3 +160,17 @@ API:
 ## 打击乐记谱文件
 
 - pipeline/drum_notation.py  GM 鼓 MIDI -> 标准鼓谱 MusicXML (符头/位置映射)
+
+## GPU 实测 (RTX 3060, 已跑通)
+
+宿主装好 nvidia-container-toolkit 后 (sudo nvidia-ctk runtime configure --runtime=docker && 重启 docker):
+
+    # GPU 版镜像用官方 pytorch CUDA 镜像 (torch 预置, 避免大 wheel 走代理损坏)
+    BUILD_PROXY=http://172.20.128.1:20808 docker compose --profile gpu build web-gpu
+    docker compose --profile gpu up -d web-gpu   # 浏览器 http://localhost:8080
+
+已实测: 容器内 torch.cuda.is_available()=True, device=RTX 3060;
+整首 4 分钟歌 (song.mp3) 全链路 GPU 约 64 秒 (CPU 需数分钟)。
+DEVICE=cuda 时 demucs -d cuda 与 adtof --device cuda 均走 GPU。
+
+注意: pipeline/Dockerfile.gpu 里 apt 走直连 (不走代理), pip/git 走 PIP_PROXY build-arg。

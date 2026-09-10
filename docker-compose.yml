@@ -76,6 +76,10 @@ services:
       args:
         PIP_PROXY: ${BUILD_PROXY:-}
     image: audiojam-base:gpu
+    # Select the nvidia runtime explicitly. daemon.json registers it but does not set
+    # it as default, and `deploy...devices` alone then silently yields no GPU inside
+    # the container (torch.cuda.is_available()=False -> pipeline falls back to -d cpu).
+    runtime: nvidia
     environment:
       DEVICE: cuda
       DATA_ROOT: /data

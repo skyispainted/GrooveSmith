@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0e14">
+<title>GrooveSmith · 鼓谱工作台</title>
+<script src="/static/midi-player.js"></script>
+<style>
+  :root{
+    --bg:#0a0d13; --panel:#0e1420; --panel2:#121a29; --card:#151d2e;
+    --line:#222c42; --line2:#2b374f; --txt:#e8edf6; --muted:#8b97ad; --dim:#5b6780;
+    --accent:#38bdf8; --accent3:#818cf8; --grad:linear-gradient(135deg,#38bdf8,#818cf8);
+    --ok:#34d399; --err:#f87171; --r:14px; --r-sm:9px;
+    --sidew:340px; --safe-b:env(safe-area-inset-bottom,0px);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;height:100%;}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;
+    background:var(--bg);color:var(--txt);line-height:1.5;-webkit-font-smoothing:antialiased;
+    height:100vh;overflow:hidden;}
+  a{color:var(--accent);}
+  .app{display:flex;height:100vh;}
+
+  /* ---------------- sidebar ---------------- */
+  .side{width:var(--sidew);flex:0 0 var(--sidew);background:var(--panel);
+    border-right:1px solid var(--line);display:flex;flex-direction:column;height:100vh;}
+  .side-head{display:flex;align-items:center;gap:11px;padding:16px 18px;border-bottom:1px solid var(--line);}
+  .logo{width:34px;height:34px;border-radius:9px;background:var(--grad);display:grid;place-items:center;
+    font-weight:800;color:#06121f;font-size:18px;}
+  .brand{font-weight:700;font-size:15px;}
+  .brand small{display:block;font-weight:400;font-size:11px;color:var(--muted);}
+  .side-scroll{flex:1;overflow-y:auto;padding:16px 18px 28px;}
+
+  .modeswitch{display:flex;background:var(--bg);border:1px solid var(--line);border-radius:11px;padding:4px;margin-bottom:20px;}
+  .modeswitch button{flex:1;border:0;background:transparent;color:var(--muted);padding:9px;border-radius:8px;
+    font-size:13px;font-weight:700;cursor:pointer;transition:.15s;}
+  .modeswitch button.on{background:var(--card);color:var(--txt);box-shadow:0 1px 6px rgba(0,0,0,.3);}
+
+  .grp{margin-bottom:22px;}
+  .grp > .lbl{font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
+    color:var(--dim);margin-bottom:10px;display:flex;align-items:center;gap:7px;}
+  .grp .lbl .idx{width:18px;height:18px;border-radius:5px;background:var(--card);border:1px solid var(--line);
+    display:grid;place-items:center;color:var(--accent);font-size:10px;}
+
+  .drop{border:1.5px dashed var(--line2);border-radius:var(--r-sm);padding:20px 14px;text-align:center;
+    background:var(--bg);transition:.15s;cursor:pointer;display:block;}
+  .drop.drag{border-color:var(--accent);background:#101f30;}
+  .drop .ic{font-size:24px;}
+  .drop .t{font-weight:600;margin-top:6px;font-size:13px;}
+  .drop .s{color:var(--dim);font-size:11px;margin-top:3px;}
+  .drop input{display:none;}
+  .fname{margin-top:9px;font-size:12px;color:var(--accent);word-break:break-all;}
+
+  .btn{appearance:none;border:0;border-radius:10px;padding:12px 16px;font-size:14px;font-weight:700;
+    cursor:pointer;background:var(--grad);color:#06121f;transition:.12s;width:100%;min-height:44px;}
+  .btn:active{transform:scale(.98);} .btn:disabled{opacity:.5;cursor:not-allowed;}
+  .btn.ghost{background:var(--card);color:var(--txt);border:1px solid var(--line);}
+  .btn.mt{margin-top:12px;}
+
+  .seg{display:flex;background:var(--bg);border:1px solid var(--line);border-radius:9px;padding:3px;}
+  .seg button{flex:1;border:0;background:transparent;color:var(--muted);padding:8px;border-radius:7px;
+    font-size:12px;font-weight:600;cursor:pointer;}
+  .seg button.on{background:var(--card);color:var(--txt);}
+
+  /* faders */
+  .fader{margin-bottom:14px;}
+  .fader .frow{display:flex;justify-content:space-between;margin-bottom:5px;}
+  .fader label{font-size:12px;color:var(--txt);font-weight:600;}
+  .fader .val{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;}
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:26px;background:transparent;cursor:pointer;}
+  input[type=range]::-webkit-slider-runnable-track{height:5px;border-radius:99px;background:var(--line2);}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:17px;height:17px;border-radius:50%;
+    background:var(--accent);margin-top:-6px;box-shadow:0 0 0 4px rgba(56,189,248,.16);}
+  input[type=range]::-moz-range-track{height:5px;border-radius:99px;background:var(--line2);}
+  input[type=range]::-moz-range-thumb{width:17px;height:17px;border:0;border-radius:50%;background:var(--accent);}
+
+  .track{height:8px;background:var(--bg);border:1px solid var(--line);border-radius:99px;overflow:hidden;}
+  .track > i{display:block;height:100%;width:0;background:var(--grad);transition:width .4s;}
+  .stagerow{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-bottom:7px;}
+  .stagerow b{color:var(--txt);}
+  .logs{margin-top:10px;background:var(--bg);border:1px solid var(--line);border-radius:var(--r-sm);
+    padding:9px;height:96px;overflow:auto;font:11px/1.55 ui-monospace,Menlo,Consolas,monospace;color:#9fb3c8;white-space:pre-wrap;}
+  .dl{display:flex;flex-wrap:wrap;gap:7px;}
+  .dl a{font-size:12px;font-weight:600;color:var(--txt);background:var(--card);border:1px solid var(--line);
+    padding:7px 11px;border-radius:99px;text-decoration:none;}
+  .dl a:hover{border-color:var(--accent);}
+  .note{font-size:11px;color:var(--dim);margin-top:10px;line-height:1.6;}
+
+  /* ---------------- main area ---------------- */
+  .main{flex:1;display:flex;flex-direction:column;height:100vh;min-width:0;}
+  .topbar{height:52px;flex:0 0 52px;display:flex;align-items:center;gap:12px;padding:0 18px;
+    border-bottom:1px solid var(--line);background:var(--panel2);}
+  .hamb{display:none;background:var(--card);border:1px solid var(--line);color:var(--txt);
+    width:38px;height:38px;border-radius:9px;font-size:18px;cursor:pointer;}
+  .topbar .ttl{font-size:14px;font-weight:600;}
+  .topbar .status{margin-left:auto;font-size:12px;color:var(--muted);display:flex;align-items:center;gap:8px;}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--dim);}
+  .dot.run{background:var(--accent);animation:pulse 1s infinite;}
+  .dot.done{background:var(--ok);} .dot.err{background:var(--err);}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.3;}}
+
+  .stage{flex:1;overflow:auto;padding:22px;background:
+    radial-gradient(900px 400px at 70% -20%,#141d31 0,var(--bg) 60%);}
+  .score{background:#fff;border-radius:12px;padding:16px;box-shadow:0 10px 40px rgba(0,0,0,.4);
+    max-width:1100px;margin:0 auto;overflow:auto;}
+  .score svg{max-width:100%;height:auto;display:block;margin:0 auto;}
+  .empty{display:grid;place-items:center;height:100%;color:var(--dim);text-align:center;}
+  .empty .big{font-size:44px;opacity:.5;} .empty .t{margin-top:12px;font-size:14px;}
+
+  /* transport bar (sticky bottom of main) */
+  .transport{flex:0 0 auto;display:flex;align-items:center;gap:14px;padding:12px 18px calc(12px + var(--safe-b));
+    border-top:1px solid var(--line);background:var(--panel2);}
+  .transport.hidden{display:none;}
+  .playbtn{flex:0 0 auto;width:48px;height:48px;border-radius:50%;border:0;background:var(--grad);
+    color:#06121f;font-size:19px;cursor:pointer;display:grid;place-items:center;}
+  .playbtn:active{transform:scale(.96);}
+  .time{font:12px ui-monospace,Menlo,Consolas,monospace;color:var(--muted);font-variant-numeric:tabular-nums;min-width:40px;text-align:center;}
+  .seek{flex:1;min-width:80px;} .seek input{margin:0;}
+
+  .hidden{display:none!important;}
+
+  /* mobile drawer */
+  .scrim{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:45;}
+  @media (max-width:900px){
+    .side{position:fixed;left:0;top:0;z-index:50;transform:translateX(-100%);transition:.25s;box-shadow:0 0 40px rgba(0,0,0,.5);}
+    .side.open{transform:none;}
+    .scrim.open{display:block;}
+    .hamb{display:grid;place-items:center;}
+    .stage{padding:14px;}
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- ============ SIDEBAR ============ -->
+  <aside class="side" id="side">
+    <div class="side-head">
+      <div class="logo">♪</div>
+      <div class="brand">GrooveSmith<small>鼓谱工作台</small></div>
+    </div>
+    <div class="side-scroll">
+      <div class="modeswitch">
+        <button id="m-gen" class="on" onclick="setMode('gen')">从音频生成</button>
+        <button id="m-imp" onclick="setMode('imp')">导入谱子</button>
+      </div>
+
+      <!-- ---- GEN controls ---- -->
+      <div id="ctl-gen">
+        <div class="grp">
+          <div class="lbl"><span class="idx">1</span>上传音频</div>
+          <label class="drop" id="drop">
+            <div class="ic">🎵</div>
+            <div class="t">点击 或 拖入音频</div>
+            <div class="s">wav / mp3 / flac / ogg / m4a</div>
+            <input type="file" id="audioFile" accept=".wav,.mp3,.flac,.ogg,.m4a">
+          </label>
+          <div class="fname" id="fname"></div>
+          <button class="btn mt" id="btnUpload" onclick="startUpload()">开始处理</button>
+        </div>
+
+        <div class="grp hidden" id="progGrp">
+          <div class="lbl"><span class="idx">2</span>处理进度</div>
+          <div class="stagerow"><span id="stageText">排队中…</span><b id="pctText">0%</b></div>
+          <div class="track"><i id="barFill"></i></div>
+          <pre class="logs" id="logBox"></pre>
+        </div>
+
+        <div class="grp hidden" id="playGrp">
+          <div class="lbl"><span class="idx">3</span>播放与混音</div>
+          <div class="fader"><div class="frow"><label>原声来源</label></div>
+            <div class="seg">
+              <button id="src-original" class="on" onclick="pickSrc('original')">原始整曲</button>
+              <button id="src-drums" onclick="pickSrc('drums')">分离鼓轨</button>
+            </div>
+          </div>
+          <div class="fader"><div class="frow"><label>谱子合成音</label><span class="val" id="volMidiVal">90</span></div>
+            <input type="range" id="volMidi" min="0" max="100" value="90" oninput="applyVolumes()"></div>
+          <div class="fader"><div class="frow"><label>原声</label><span class="val" id="volOrigVal">60</span></div>
+            <input type="range" id="volOrig" min="0" max="100" value="60" oninput="applyVolumes()"></div>
+          <div class="fader"><div class="frow"><label>总音量</label><span class="val" id="volMasterVal">100</span></div>
+            <input type="range" id="volMaster" min="0" max="100" value="100" oninput="applyVolumes()"></div>
+          <div class="note" id="playHint">谱子合成音使用自托管真实鼓采样，首次播放会加载采样，稍等片刻。</div>
+        </div>
+
+        <div class="grp hidden" id="dlGrp">
+          <div class="lbl"><span class="idx">4</span>下载产物</div>
+          <div class="dl" id="dlLinks"></div>
+        </div>
+      </div>
+
+      <!-- ---- IMPORT controls ---- -->
+      <div id="ctl-imp" class="hidden">
+        <div class="grp">
+          <div class="lbl"><span class="idx">1</span>导入谱子</div>
+          <label class="drop" id="dropImp">
+            <div class="ic">🎼</div>
+            <div class="t">点击 或 拖入谱子</div>
+            <div class="s">.mid / .midi / .musicxml / .xml / .mxl</div>
+            <input type="file" id="scoreFile" accept=".mid,.midi,.musicxml,.xml,.mxl">
+          </label>
+          <div class="fname" id="fnameImp"></div>
+          <button class="btn mt" id="btnImport" onclick="startImport()">渲染预览</button>
+          <div class="note" id="impStatus"></div>
+        </div>
+        <div class="grp hidden" id="impPlayGrp">
+          <div class="lbl"><span class="idx">2</span>播放</div>
+          <div class="fader"><div class="frow"><label>合成音量</label><span class="val" id="volImpVal">90</span></div>
+            <input type="range" id="volImp" min="0" max="100" value="90" oninput="applyImpVol()"></div>
+        </div>
+      </div>
+    </div>
+  </aside>
+  <div class="scrim" id="scrim" onclick="closeSide()"></div>
+
+  <!-- ============ MAIN ============ -->
+  <div class="main">
+    <div class="topbar">
+      <button class="hamb" onclick="openSide()">☰</button>
+      <div class="ttl" id="mainTitle">鼓谱预览</div>
+      <div class="status"><span class="dot" id="statusDot"></span><span id="statusText">就绪</span></div>
+    </div>
+
+    <div class="stage">
+      <div class="score hidden" id="scoreWrap"><div id="preview"></div></div>
+      <div class="empty" id="emptyState">
+        <div>
+          <div class="big">🥁</div>
+          <div class="t">上传音频生成鼓谱，或导入现成谱子查看</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- transport (shared, wired to whichever mode is active) -->
+    <div class="transport hidden" id="transport">
+      <button class="playbtn" id="btnPlay" onclick="onPlayClick()">▶</button>
+      <span class="time" id="tCur">0:00</span>
+      <div class="seek"><input type="range" id="seekBar" min="0" max="1000" value="0"
+           oninput="onSeekInput()" onchange="onSeekCommit()"></div>
+      <span class="time" id="tDur">0:00</span>
+    </div>
+  </div>
+</div>
+
+<!-- hidden media -->
+<midi-player id="mp" sound-font="/static/soundfonts/sgm_plus" style="display:none"></midi-player>
+<midi-player id="mpImp" sound-font="/static/soundfonts/sgm_plus" style="display:none"></midi-player>
+<audio id="origAudio" preload="metadata" crossorigin="anonymous" style="display:none"></audio>
+
+<script>
+let mode='gen';
+function setMode(m){
+  mode=m;
+  document.getElementById('m-gen').classList.toggle('on',m==='gen');
+  document.getElementById('m-imp').classList.toggle('on',m==='imp');
+  document.getElementById('ctl-gen').classList.toggle('hidden',m!=='gen');
+  document.getElementById('ctl-imp').classList.toggle('hidden',m!=='imp');
+  document.getElementById('mainTitle').textContent = m==='gen'?'鼓谱预览':'导入预览';
+  // reset preview + transport when switching
+  showPreview(null);
+  document.getElementById('transport').classList.add('hidden');
+  stopAll(); stopImp();
+}
+function openSide(){ document.getElementById('side').classList.add('open'); document.getElementById('scrim').classList.add('open'); }
+function closeSide(){ document.getElementById('side').classList.remove('open'); document.getElementById('scrim').classList.remove('open'); }
+function fmtTime(s){ if(!isFinite(s)||s<0)s=0; const m=Math.floor(s/60),x=Math.floor(s%60); return m+':'+(x<10?'0':'')+x; }
+function setStatus(kind,text){ const d=document.getElementById('statusDot');
+  d.className='dot'+(kind?(' '+kind):''); document.getElementById('statusText').textContent=text; }
+function showPreview(svg){
+  const w=document.getElementById('scoreWrap'), e=document.getElementById('emptyState');
+  if(svg){ document.getElementById('preview').innerHTML=svg; w.classList.remove('hidden'); e.classList.add('hidden'); }
+  else{ document.getElementById('preview').innerHTML=''; w.classList.add('hidden'); e.classList.remove('hidden'); }
+}
+
+/* file pickers */
+function wireDrop(dropId,inputId,nameId){
+  const d=document.getElementById(dropId),inp=document.getElementById(inputId),nm=document.getElementById(nameId);
+  inp.addEventListener('change',()=>{ nm.textContent=inp.files[0]?'已选择：'+inp.files[0].name:''; });
+  ['dragover','dragenter'].forEach(e=>d.addEventListener(e,ev=>{ev.preventDefault();d.classList.add('drag');}));
+  ['dragleave','drop'].forEach(e=>d.addEventListener(e,ev=>{ev.preventDefault();d.classList.remove('drag');}));
+  d.addEventListener('drop',ev=>{ if(ev.dataTransfer.files[0]){ inp.files=ev.dataTransfer.files; nm.textContent='已选择：'+inp.files[0].name; } });
+}
+wireDrop('drop','audioFile','fname');
+wireDrop('dropImp','scoreFile','fnameImp');
+
+/* ---------------- generate ---------------- */
+let pollTimer=null,currentJob=null;
+const STAGE_ZH={queued:'排队中',separation:'分离鼓组',transcription:'转 MIDI',
+  musicxml:'生成 MusicXML',render:'渲染谱面',done:'完成',error:'出错'};
+async function startUpload(){
+  const f=document.getElementById('audioFile').files[0];
+  if(!f){ alert('请先选择音频文件'); return; }
+  const btn=document.getElementById('btnUpload'); btn.disabled=true;
+  document.getElementById('progGrp').classList.remove('hidden');
+  document.getElementById('playGrp').classList.add('hidden');
+  document.getElementById('dlGrp').classList.add('hidden');
+  document.getElementById('logBox').textContent='';
+  setProgress(2,'上传中…'); setStatus('run','上传中…');
+  const fd=new FormData(); fd.append('file',f);
+  let r; try{ r=await fetch('/api/upload',{method:'POST',body:fd}); }
+  catch(e){ alert('上传失败: '+e); btn.disabled=false; return; }
+  if(!r.ok){ alert('上传失败: '+await r.text()); btn.disabled=false; return; }
+  const {job_id}=await r.json(); poll(job_id,btn);
+}
+function setProgress(p,stage){ document.getElementById('barFill').style.width=p+'%';
+  document.getElementById('pctText').textContent=p+'%'; if(stage)document.getElementById('stageText').textContent=stage; }
+function poll(job_id,btn){
+  if(pollTimer)clearInterval(pollTimer);
+  pollTimer=setInterval(async()=>{
+    let j; try{ j=await(await fetch('/api/status/'+job_id)).json(); }catch(e){ return; }
+    setProgress(j.progress||0,STAGE_ZH[j.stage]||j.stage);
+    setStatus('run',(STAGE_ZH[j.stage]||j.stage)+' '+(j.progress||0)+'%');
+    const lb=document.getElementById('logBox'); lb.textContent=(j.logs||[]).join('\n'); lb.scrollTop=1e9;
+    if(j.status==='done'){ clearInterval(pollTimer); btn.disabled=false; setStatus('done','完成'); showResult(job_id); }
+    else if(j.status==='error'){ clearInterval(pollTimer); btn.disabled=false; setStatus('err','出错，见日志'); }
+  },1000);
+}
+async function showResult(job_id){
+  currentJob=job_id;
+  document.getElementById('dlGrp').classList.remove('hidden');
+  document.getElementById('dlLinks').innerHTML=['midi','musicxml','pdf','png'].map(n=>
+    '<a href="/api/file/'+job_id+'/'+n+'" download>⬇ '+n+'</a>').join('');
+  const svg=await(await fetch('/api/svg/'+job_id)).text(); showPreview(svg);
+  document.getElementById('playGrp').classList.remove('hidden');
+  document.getElementById('transport').classList.remove('hidden');
+  const mp=document.getElementById('mp'); mp.src='/api/midi/'+job_id;
+  activeMp=mp; activeSeek='seekBar';
+  pickSrc('original'); applyVolumes(); wireProgress();
+}
+function pickSrc(kind){
+  document.getElementById('src-original').classList.toggle('on',kind==='original');
+  document.getElementById('src-drums').classList.toggle('on',kind==='drums');
+  if(!currentJob)return;
+  const a=document.getElementById('origAudio'); const was=!a.paused;
+  a.src='/api/audio/'+currentJob+'/'+kind; a.load(); ensureAudioGraph(); if(was)a.play().catch(()=>{});
+}
+
+/* ---------------- shared web-audio bus ---------------- */
+let audioGraph=null;
+function ensureAudioGraph(){
+  if(audioGraph)return audioGraph; if(!window.Tone)return null;
+  try{ const ctx=Tone.getContext().rawContext; const a=document.getElementById('origAudio');
+    const src=ctx.createMediaElementSource(a); const og=ctx.createGain(), mg=ctx.createGain();
+    src.connect(og); og.connect(mg); mg.connect(ctx.destination); audioGraph={ctx,src,origGain:og,masterGain:mg};
+  }catch(e){ console.warn('audiograph',e); audioGraph=null; } return audioGraph;
+}
+function pctToDb(p){ return p<=0?-Infinity:20*Math.log10(p/100); }
+function applyVolumes(){
+  const vm=+document.getElementById('volMidi').value,vo=+document.getElementById('volOrig').value,
+        vmaster=+document.getElementById('volMaster').value;
+  document.getElementById('volMidiVal').textContent=vm;
+  document.getElementById('volOrigVal').textContent=vo;
+  document.getElementById('volMasterVal').textContent=vmaster;
+  try{ if(window.Tone) Tone.getDestination().volume.value=pctToDb(vm/100*vmaster/100*100); }catch(e){}
+  const oe=Math.max(0,Math.min(1,vo/100*vmaster/100)); const g=ensureAudioGraph();
+  if(g&&g.origGain){ g.origGain.gain.value=oe; document.getElementById('origAudio').volume=1; }
+  else document.getElementById('origAudio').volume=oe;
+}
+
+/* ---------------- transport (shared) ---------------- */
+let seeking=false,progTimer=null,activeMp=null,activeSeek='seekBar',hasOrig=true;
+function curDur(){
+  const a=document.getElementById('origAudio');
+  const aOk=hasOrig && a.src && isFinite(a.duration) && a.duration>0;
+  if(aOk) return {cur:a.currentTime,dur:a.duration};
+  const mp=activeMp; return {cur:(mp&&mp.currentTime)||0,dur:(mp&&mp.duration)||0};
+}
+function wireProgress(){
+  hasOrig=true;
+  const a=document.getElementById('origAudio');
+  a.onloadedmetadata=tick; a.ontimeupdate=tick; a.onended=()=>setPlay(false);
+  if(activeMp) activeMp.addEventListener('load',tick);
+  if(progTimer)clearInterval(progTimer); progTimer=setInterval(tick,250);
+}
+function tick(){
+  if(seeking)return; const {cur,dur}=curDur();
+  document.getElementById('tCur').textContent=fmtTime(cur);
+  document.getElementById('tDur').textContent=fmtTime(dur);
+  document.getElementById('seekBar').value=dur>0?Math.round(cur/dur*1000):0;
+}
+function onSeekInput(){ seeking=true; const {dur}=curDur();
+  document.getElementById('tCur').textContent=fmtTime(+document.getElementById('seekBar').value/1000*dur); }
+function onSeekCommit(){ const {dur}=curDur(); const v=+document.getElementById('seekBar').value/1000*dur;
+  const a=document.getElementById('origAudio');
+  try{ if(hasOrig && a.src && isFinite(a.duration)) a.currentTime=v; }catch(e){}
+  try{ if(activeMp) activeMp.currentTime=v; }catch(e){} seeking=false; }
+function setPlay(on){ const b=document.getElementById('btnPlay'); b.textContent=on?'⏸':'▶'; b.dataset.playing=on?'1':''; }
+function onPlayClick(){ if(mode==='gen') togglePlay(); else toggleImpPlay(); }
+async function togglePlay(){
+  const mp=document.getElementById('mp'), a=document.getElementById('origAudio'), b=document.getElementById('btnPlay');
+  if(b.dataset.playing==='1'){ try{mp.stop();}catch(e){} a.pause(); setPlay(false); return; }
+  try{ if(window.Tone) await Tone.start(); }catch(e){}
+  const g=ensureAudioGraph(); try{ if(g&&g.ctx.state==='suspended') await g.ctx.resume(); }catch(e){}
+  applyVolumes(); try{ await mp.start(); }catch(e){}
+  try{ a.currentTime=0; await a.play(); }catch(e){} setPlay(true);
+}
+function stopAll(){ const mp=document.getElementById('mp'),a=document.getElementById('origAudio');
+  try{mp.stop();}catch(e){} a.pause(); a.currentTime=0; setPlay(false); }
+
+/* ---------------- import ---------------- */
+let currentImp=null;
+async function startImport(){
+  const f=document.getElementById('scoreFile').files[0];
+  if(!f){ alert('请先选择 MIDI 或 MusicXML 文件'); return; }
+  const btn=document.getElementById('btnImport'); btn.disabled=true;
+  document.getElementById('impStatus').textContent='渲染中…'; setStatus('run','渲染中…');
+  const fd=new FormData(); fd.append('file',f);
+  let r; try{ r=await fetch('/api/import',{method:'POST',body:fd}); }
+  catch(e){ document.getElementById('impStatus').textContent='失败: '+e; btn.disabled=false; setStatus('err','失败'); return; }
+  if(!r.ok){ document.getElementById('impStatus').textContent='失败: '+await r.text(); btn.disabled=false; setStatus('err','失败'); return; }
+  const info=await r.json(); currentImp=info.import_id;
+  const svg=await(await fetch('/api/import/'+currentImp+'/svg')).text(); showPreview(svg);
+  document.getElementById('impStatus').textContent='完成'; setStatus('done','完成');
+  const mpImp=document.getElementById('mpImp');
+  if(info.has_midi){
+    document.getElementById('impPlayGrp').classList.remove('hidden');
+    document.getElementById('transport').classList.remove('hidden');
+    mpImp.src='/api/import/'+currentImp+'/midi'; activeMp=mpImp; applyImpVol(); wireProgressImp();
+  }else{
+    document.getElementById('impPlayGrp').classList.add('hidden');
+    document.getElementById('transport').classList.add('hidden');
+  }
+  btn.disabled=false;
+}
+function wireProgressImp(){
+  hasOrig=false;
+  const mp=document.getElementById('mpImp'); mp.addEventListener('load',tick); mp.addEventListener('stop',()=>setPlay(false));
+  if(progTimer)clearInterval(progTimer); progTimer=setInterval(tick,250);
+}
+async function toggleImpPlay(){
+  const mp=document.getElementById('mpImp'),b=document.getElementById('btnPlay');
+  if(b.dataset.playing==='1'){ try{mp.stop();}catch(e){} setPlay(false); return; }
+  try{ if(window.Tone) await Tone.start(); }catch(e){}
+  applyImpVol(); try{ await mp.start(); }catch(e){} setPlay(true);
+}
+function stopImp(){ const mp=document.getElementById('mpImp'); try{mp.stop();}catch(e){} }
+function applyImpVol(){ const v=+document.getElementById('volImp').value;
+  document.getElementById('volImpVal').textContent=v;
+  try{ if(window.Tone) Tone.getDestination().volume.value=pctToDb(v); }catch(e){} }
+</script>
+</body>
+</html>

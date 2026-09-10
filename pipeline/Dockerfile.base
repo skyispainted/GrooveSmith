@@ -1,0 +1,55 @@
+FROM python:3.11-slim
+
+# ---- proxy (build-time only; needed to reach github.com in this network) ----
+# Pass with: --build-arg HTTP_PROXY=http://172.20.128.1:20808 --build-arg HTTPS_PROXY=...
+ARG HTTP_PROXY=
+ARG HTTPS_PROXY=
+ENV http_proxy=$HTTP_PROXY https_proxy=$HTTPS_PROXY
+
+ENV DEBIAN_FRONTEND=noninteractive PIP_NO_CACHE_DIR=1 PYTHONUNBUFFERED=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ffmpeg libsndfile1 git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# ---- torch: cpu (default) or cu121 ----
+ARG TORCH_VARIANT=cpu
+RUN if [ "$TORCH_VARIANT" = "cu121" ]; then \
+      pip install --timeout 120 --retries 5 torch==2.3.1 torchaudio==2.3.1 --index-url https://download.pytorch.org/whl/cu121 ; \
+    else \
+      pip install --timeout 120 --retries 5 torch==2.3.1 torchaudio==2.3.1 --index-url https://download.pytorch.org/whl/cpu ; \
+    fi
+
+# ---- separation + audio deps ----
+RUN pip install --timeout 120 --retries 5 "numpy<2"
+RUN pip install --timeout 120 --retries 5 "soundfile==0.12.1" "pretty_midi==0.2.10"
+RUN pip install --timeout 120 --retries 5 "librosa==0.10.2.post1"
+RUN pip install --timeout 120 --retries 5 "demucs==4.0.1"
+
+# ---- ADTOF-pytorch (drum transcription; bundled weights) via github+proxy ----
+RUN git config --global http.proxy "$HTTP_PROXY" && \
+    git config --global https.proxy "$HTTPS_PROXY" && \
+    pip install --timeout 120 --retries 5 "git+https://github.com/xavriley/ADTOF-pytorch.git" && \
+    git config --global --unset http.proxy || true && \
+    git config --global --unset https.proxy || true
+
+# clear proxy so runtime doesn't try to use build-time proxy
+ENV http_proxy= https_proxy=
+
+# ---- notation rendering: music21 (MIDI->MusicXML), verovio (->SVG), cairosvg (->PDF/PNG) ----
+RUN apt-get update && apt-get install -y --no-install-recommends libcairo2 && rm -rf /var/lib/apt/lists/*
+RUN pip install --timeout 120 --retries 5 music21==9.1.0 verovio cairosvg
+
+# ---- web server deps ----
+RUN pip install --timeout 120 --retries 5 "fastapi==0.111.0" "uvicorn[standard]==0.30.1" "python-multipart==0.0.9"
+
+# ---- app files ----
+WORKDIR /work
+COPY run_pipeline.py /work/run_pipeline.py
+COPY drum_notation.py /work/drum_notation.py
+COPY webapp.py /work/webapp.py
+COPY index.html /work/index.html
+COPY static /work/static
+
+# CLI entrypoint by default; the web service overrides `command` in docker-compose.
+ENTRYPOINT ["python", "/work/run_pipeline.py"]

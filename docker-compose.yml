@@ -1,0 +1,69 @@
+# audio-jam: audio -> drums -> MIDI -> MusicXML/PDF
+# Default service is CPU-only (runs anywhere). GPU is an optional profile.
+services:
+  # ---- CPU (default). Works with no GPU / no nvidia-container-toolkit. ----
+  pipeline:
+    build:
+      context: ./pipeline
+      dockerfile: Dockerfile.base
+      args:
+        TORCH_VARIANT: cpu
+        # set these only if github is blocked in your network:
+        HTTP_PROXY: ${BUILD_PROXY:-}
+        HTTPS_PROXY: ${BUILD_PROXY:-}
+    image: audiojam-base:cpu
+    environment:
+      DEVICE: cpu
+    volumes:
+      - ./data:/data
+    # override input per run:
+    #   docker compose run --rm pipeline --input /data/input/song.wav --outdir /data/output
+    command: [--input, /data/input/test_drums.wav, --outdir, /data/output, --device, cpu]
+
+  # ---- WebUI (CPU). Upload audio, watch progress, preview score, import MIDI/MusicXML. ----
+  #   BUILD_PROXY=http://172.20.128.1:20808 docker compose build web
+  #   docker compose up web       then open http://localhost:8080
+  web:
+    build:
+      context: ./pipeline
+      dockerfile: Dockerfile.base
+      args:
+        TORCH_VARIANT: cpu
+        HTTP_PROXY: ${BUILD_PROXY:-}
+        HTTPS_PROXY: ${BUILD_PROXY:-}
+    image: audiojam-base:cpu
+    environment:
+      DEVICE: cpu
+      DATA_ROOT: /data
+    volumes:
+      - ./data:/data
+    ports:
+      - "8080:8080"
+    entrypoint: ["uvicorn", "webapp:app", "--host", "0.0.0.0", "--port", "8080"]
+
+  # ---- GPU (optional). Requires nvidia-container-toolkit on host. ----
+  # Build image with cu121 torch, run with GPU reservation.
+  #   docker compose --profile gpu build
+  #   docker compose --profile gpu run --rm pipeline-gpu --input /data/input/song.wav
+  pipeline-gpu:
+    profiles: [gpu]
+    build:
+      context: ./pipeline
+      dockerfile: Dockerfile.base
+      args:
+        TORCH_VARIANT: cu121
+        HTTP_PROXY: ${BUILD_PROXY:-}
+        HTTPS_PROXY: ${BUILD_PROXY:-}
+    image: audiojam-base:cu121
+    environment:
+      DEVICE: cuda
+    volumes:
+      - ./data:/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command: [--input, /data/input/test_drums.wav, --outdir, /data/output, --device, cuda]

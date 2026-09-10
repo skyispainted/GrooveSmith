@@ -331,6 +331,7 @@ function poll(job_id,btn){
 async function showResult(job_id){
   currentJob=job_id;
   if(uploadTitle) document.getElementById('mainTitle').textContent = uploadTitle;
+  preloadSoundfont();
   document.getElementById('dlGrp').classList.remove('hidden');
   document.getElementById('dlLinks').innerHTML=['midi','musicxml','pdf','png'].map(n=>
     '<a href="/api/file/'+job_id+'/'+n+'" download>⬇ '+n+'</a>').join('');
@@ -399,6 +400,23 @@ function resyncMidi(){
 /* ---------------- playback highlight (verovio timemap) ---------------- */
 let timemap=[];          // [{tstamp(ms), on:[ids]}]
 let hlIds=[];            // currently highlighted element ids
+
+/* preload drum samples into browser cache so playback doesn't stall on network fetch */
+let sfPreloaded=false;
+function preloadSoundfont(){
+  if(sfPreloaded) return; sfPreloaded=true;
+  const vel=[15,31,47,63,79,95,111,127];
+  const base='/static/soundfonts/sgm_plus/percussion/';
+  let i=0;
+  // fetch gradually to avoid a burst; browser caches them
+  function next(){
+    if(i>=(81-35+1)) return;
+    const p=35+i; i++;
+    for(const v of vel){ fetch(base+'p'+p+'_v'+v+'.mp3').catch(()=>{}); }
+    setTimeout(next, 60);
+  }
+  next();
+}
 async function loadTimemap(url){
   timemap=[]; hlIds=[];
   try{
@@ -506,6 +524,7 @@ async function startImport(){
   catch(e){ document.getElementById('impStatus').textContent='失败: '+e; btn.disabled=false; setStatus('err','失败'); return; }
   if(!r.ok){ document.getElementById('impStatus').textContent='失败: '+await r.text(); btn.disabled=false; setStatus('err','失败'); return; }
   const info=await r.json(); currentImp=info.import_id;
+  preloadSoundfont();
   const svg=await(await fetch('/api/import/'+currentImp+'/svg')).text(); showPreview(svg);
   await loadTimemap('/api/import/'+currentImp+'/timemap');
   document.getElementById('impStatus').textContent='完成'; setStatus('done','完成');

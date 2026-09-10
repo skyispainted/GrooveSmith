@@ -76,13 +76,11 @@ def build_drum_score(midi_path, bpm=None, max_measures=200, title=None):
     grid = sec_per_beat / 4.0          # 16th-note grid
     slots_per_measure = 16             # 4/4, sixteenths
 
-    # trim silent intro: shift so the first hit lands at the start of a measure
-    if events:
-        first = events[0][0]
-        # align first hit to a measure boundary just before it
-        origin = first
-    else:
-        origin = 0.0
+    # Keep the score aligned to absolute audio time (score time == MIDI time == audio
+    # time) so the playback highlight matches the original. The silent intro before the
+    # first hit becomes clean whole-measure rests (rest-merging below handles that),
+    # NOT a time shift -- shifting would desync the highlight from the audio.
+    origin = 0.0
 
     # bucket pitches by quantized 16th slot (relative to origin)
     slots = {}

@@ -19,8 +19,8 @@ import time
 import traceback
 import uuid
 
-from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.responses import HTMLResponse, FileResponse, Response, JSONResponse
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request
+from fastapi.responses import HTMLResponse, FileResponse, Response, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 import run_pipeline as pl
@@ -44,6 +44,53 @@ PROC_LOCK = threading.Lock()  # serialize heavy GPU/CPU processing across jobs
 AUDIO_EXT = {".wav", ".mp3", ".flac", ".ogg", ".m4a"}
 MIDI_EXT = {".mid", ".midi"}
 XML_EXT = {".musicxml", ".xml", ".mxl"}
+
+_MIME = {".wav": "audio/wav", ".mp3": "audio/mpeg", ".flac": "audio/flac",
+         ".ogg": "audio/ogg", ".m4a": "audio/mp4"}
+
+
+def range_file_response(path, request):
+    """Serve a file with HTTP Range support (206) so <audio> can seek reliably."""
+    file_size = os.path.getsize(path)
+    ext = os.path.splitext(path)[1].lower()
+    ctype = _MIME.get(ext, "application/octet-stream")
+    range_header = request.headers.get("range") or request.headers.get("Range")
+    common = {"accept-ranges": "bytes", "content-type": ctype}
+
+    if not range_header or not range_header.startswith("bytes="):
+        return FileResponse(path, media_type=ctype, headers={"accept-ranges": "bytes"})
+
+    try:
+        rng = range_header.split("=", 1)[1]
+        start_s, end_s = (rng.split("-", 1) + [""])[:2]
+        start = int(start_s) if start_s else 0
+        end = int(end_s) if end_s else file_size - 1
+    except Exception:
+        start, end = 0, file_size - 1
+    start = max(0, start)
+    end = min(end, file_size - 1)
+    if start > end:
+        start = 0
+    length = end - start + 1
+
+    def iterfile():
+        with open(path, "rb") as f:
+            f.seek(start)
+            remaining = length
+            chunk = 64 * 1024
+            while remaining > 0:
+                data = f.read(min(chunk, remaining))
+                if not data:
+                    break
+                remaining -= len(data)
+                yield data
+
+    headers = {
+        "accept-ranges": "bytes",
+        "content-range": f"bytes {start}-{end}/{file_size}",
+        "content-length": str(length),
+    }
+    return StreamingResponse(iterfile(), status_code=206, media_type=ctype, headers=headers)
 
 
 def set_job(job_id, **kw):
@@ -183,7 +230,7 @@ async def get_timemap(job_id: str):
 
 
 @app.get("/api/audio/{job_id}/{kind}")
-async def get_audio(job_id: str, kind: str):
+async def get_audio(job_id: str, kind: str, request: Request):
     """kind = original (uploaded mix) | drums (separated drum stem)."""
     if kind not in ("original", "drums"):
         raise HTTPException(400, "kind must be original or drums")
@@ -194,8 +241,7 @@ async def get_audio(job_id: str, kind: str):
     p = j["outputs"].get(kind)
     if not p or not os.path.exists(p):
         raise HTTPException(404, "no such audio")
-    # FileResponse handles Range requests (needed for <audio> seeking)
-    return FileResponse(p, media_type="audio/wav" if p.endswith(".wav") else "audio/mpeg")
+    return range_file_response(p, request)
 
 
 @app.get("/api/midi/{job_id}")
@@ -232,7 +278,7 @@ async def import_score(file: UploadFile = File(...)):
             xml = src
             # also produce a MIDI so the imported score can be played
             try:
-                from music21 import converter
+                from music21 import converte
                 m = os.path.join(jd, "from_xml.mid")
                 converter.parse(src).write("midi", fp=m)
                 midi_path = m

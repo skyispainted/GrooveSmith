@@ -419,7 +419,7 @@ function wireProgress(){
   hasOrig=true;
   const a=document.getElementById('origAudio');
   a.onloadedmetadata=tick; a.ontimeupdate=tick; a.onended=()=>setPlay(false);
-  if(activeMp) activeMp.addEventListener('load',tick);
+  a.onseeked=()=>{ seeking=false; tick(); };   // release lock only after the seek actually applied
   if(progTimer)clearInterval(progTimer); progTimer=setInterval(tick,250);
 }
 function tick(){
@@ -428,25 +428,32 @@ function tick(){
   document.getElementById('tDur').textContent=fmtTime(dur);
   document.getElementById('seekBar').value=dur>0?Math.round(cur/dur*1000):0;
 }
-function onSeekInput(){ seeking=true; const {dur}=curDur();
-  document.getElementById('tCur').textContent=fmtTime(+document.getElementById('seekBar').value/1000*dur); }
+function onSeekInput(){
+  seeking=true;                       // lock: tick won't overwrite the bar while dragging
+  const {dur}=curDur();
+  document.getElementById('tCur').textContent=fmtTime(+document.getElementById('seekBar').value/1000*dur);
+}
 function onSeekCommit(){
   const {dur}=curDur(); const v=+document.getElementById('seekBar').value/1000*dur;
   const a=document.getElementById('origAudio'); const mp=activeMp;
   const playing=document.getElementById('btnPlay').dataset.playing==='1';
   if(hasOrig){
-    // original audio is the master clock; MIDI follows at (v - offset)
-    try{ if(a.src && isFinite(a.duration)) a.currentTime=Math.max(0,Math.min(v,a.duration)); }catch(e){}
+    // original audio is the master clock -> seek it directly (always works)
+    let done=false;
+    try{ if(a.src && isFinite(a.duration)){ a.currentTime=Math.max(0,Math.min(v,a.duration)); done=true; } }catch(e){}
+    // MIDI drum follows at (v - offset); html-midi-player seeks only while playing
     const mtarget=Math.max(0, v - offsetMs/1000);
-    // html-midi-player only seeks when playing (currentTime setter calls seekTo only if isPlaying)
     try{ if(mp && playing) mp.currentTime=mtarget; }catch(e){}
-    pendingMidiSeek = playing ? null : mtarget;   // if paused, apply on next play
+    pendingMidiSeek = playing ? null : mtarget;
+    if(!done || !a.onseeked){ seeking=false; }   // fallback release if no seeked event
+    // safety: release lock shortly even if 'seeked' never fires
+    setTimeout(()=>{ seeking=false; }, 500);
   }else{
     // import mode: MIDI is the master
     try{ if(mp && playing) mp.currentTime=v; }catch(e){}
     pendingMidiSeek = playing ? null : v;
+    seeking=false;
   }
-  seeking=false;
 }
 let pendingMidiSeek=null;
 function setPlay(on){ const b=document.getElementById('btnPlay'); b.textContent=on?'⏸':'▶'; b.dataset.playing=on?'1':''; }

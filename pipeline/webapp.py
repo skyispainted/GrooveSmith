@@ -59,19 +59,28 @@ def add_log(job_id, line):
 VEROVIO_RESOURCE = os.path.join(os.path.dirname(__import__("verovio").__file__), "data")
 
 
-def render_svg(xml_path, out_svg):
+def render_svg(xml_path, out_svg, out_timemap=None):
     import verovio
     tk = verovio.toolkit(False)
     tk.setResourcePath(VEROVIO_RESOURCE)
-    tk.setOptions({"pageHeight": 2000, "pageWidth": 1500, "scale": 40, "adjustPageHeight": True})
+    tk.setOptions({"pageHeight": 60000, "pageWidth": 2100, "scale": 40, "adjustPageHeight": True})
     if not tk.loadFile(xml_path):
         raise RuntimeError("verovio failed to load " + xml_path)
     tk.redoLayout()
-    n = tk.getPageCount()
-    svgs = [tk.renderToSVG(i + 1) for i in range(n)]
     with open(out_svg, "w") as fh:
-        fh.write("\n".join(svgs))
-    return out_svg, n
+        fh.write(tk.renderToSVG(1))
+    if out_timemap:
+        try:
+            tm = tk.renderToTimemap()
+            if not isinstance(tm, str):
+                import json as _json
+                tm = _json.dumps(tm)
+            with open(out_timemap, "w") as fh:
+                fh.write(tm)
+        except Exception:
+            with open(out_timemap, "w") as fh:
+                fh.write("[]")
+    return out_svg, 1
 
 
 def worker(job_id, audio_path):
@@ -90,14 +99,19 @@ def worker(job_id, audio_path):
             add_log(job_id, "STAGE 3/4 MIDI -> MusicXML (music21)")
             bpm = pl.estimate_bpm(drums)
             add_log(job_id, "estimated bpm = " + str(bpm))
-            xml = pl.to_musicxml(mid, jd, bpm=bpm)
+            with LOCK:
+                fname = JOBS.get(job_id, {}).get("filename") or ""
+            title = os.path.splitext(os.path.basename(fname))[0] or None
+            xml = pl.to_musicxml(mid, jd, bpm=bpm, title=title)
             set_job(job_id, progress=85, stage="render")
             add_log(job_id, "STAGE 4/4 render (verovio + cairosvg)")
             svg, pdf, png = pl.render(xml, jd)
+            timemap = os.path.join(jd, "timemap.json")
             add_log(job_id, "done")
             set_job(job_id, status="done", progress=100, stage="done",
                     outputs={"midi": mid, "musicxml": xml, "svg": svg, "pdf": pdf,
-                             "png": png, "original": audio_path, "drums": drums})
+                             "png": png, "original": audio_path, "drums": drums,
+                             "timemap": timemap, "title": title})
         except Exception as e:
             add_log(job_id, "ERROR: " + repr(e))
             add_log(job_id, traceback.format_exc())
@@ -156,6 +170,18 @@ async def get_svg(job_id: str):
     return Response(open(svg).read(), media_type="image/svg+xml")
 
 
+@app.get("/api/timemap/{job_id}")
+async def get_timemap(job_id: str):
+    with LOCK:
+        j = JOBS.get(job_id)
+    if not j or j.get("status") != "done":
+        raise HTTPException(404, "not ready")
+    tm = j["outputs"].get("timemap")
+    if not tm or not os.path.exists(tm):
+        return Response("[]", media_type="application/json")
+    return Response(open(tm).read(), media_type="application/json")
+
+
 @app.get("/api/audio/{job_id}/{kind}")
 async def get_audio(job_id: str, kind: str):
     """kind = original (uploaded mix) | drums (separated drum stem)."""
@@ -197,15 +223,16 @@ async def import_score(file: UploadFile = File(...)):
     with open(src, "wb") as fh:
         shutil.copyfileobj(file.file, fh)
     midi_path = None
+    imp_title = os.path.splitext(os.path.basename(file.filename or ""))[0] or None
     try:
         if ext in MIDI_EXT:
-            xml = pl.to_musicxml(src, jd)
+            xml = pl.to_musicxml(src, jd, title=imp_title)
             midi_path = src
         elif ext in XML_EXT:
             xml = src
             # also produce a MIDI so the imported score can be played
             try:
-                from music21 import converte
+                from music21 import converter
                 m = os.path.join(jd, "from_xml.mid")
                 converter.parse(src).write("midi", fp=m)
                 midi_path = m
@@ -214,13 +241,14 @@ async def import_score(file: UploadFile = File(...)):
         else:
             raise HTTPException(400, "unsupported score type: " + ext)
         out_svg = os.path.join(jd, "preview.svg")
-        render_svg(xml, out_svg)
+        out_tm = os.path.join(jd, "timemap.json")
+        render_svg(xml, out_svg, out_timemap=out_tm)
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(500, "render failed: " + repr(e))
     with LOCK:
-        IMPORTS[imp_id] = {"svg": out_svg, "midi": midi_path}
+        IMPORTS[imp_id] = {"svg": out_svg, "midi": midi_path, "timemap": out_tm}
     return JSONResponse({"import_id": imp_id, "has_midi": midi_path is not None})
 
 
@@ -240,6 +268,15 @@ async def import_midi(imp_id: str):
     if not rec or not rec.get("midi") or not os.path.exists(rec["midi"]):
         raise HTTPException(404, "no midi for this import")
     return FileResponse(rec["midi"], media_type="audio/midi")
+
+
+@app.get("/api/import/{imp_id}/timemap")
+async def import_timemap(imp_id: str):
+    with LOCK:
+        rec = IMPORTS.get(imp_id)
+    if not rec or not rec.get("timemap") or not os.path.exists(rec["timemap"]):
+        return Response("[]", media_type="application/json")
+    return Response(open(rec["timemap"]).read(), media_type="application/json")
 
 
 @app.get("/", response_class=HTMLResponse)

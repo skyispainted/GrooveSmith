@@ -105,6 +105,9 @@
   .score{background:#fff;border-radius:12px;padding:16px;box-shadow:0 10px 40px rgba(0,0,0,.4);
     max-width:1100px;margin:0 auto;overflow:auto;}
   .score svg{max-width:100%;height:auto;display:block;margin:0 auto;}
+  /* playback highlight: color the currently-sounding note(s) */
+  .score svg g.aj-hl,
+  .score svg g.aj-hl * { fill:#e11d48 !important; stroke:#e11d48 !important; }
   .empty{display:grid;place-items:center;height:100%;color:var(--dim);text-align:center;}
   .empty .big{font-size:44px;opacity:.5;} .empty .t{margin-top:12px;font-size:14px;}
 
@@ -180,7 +183,14 @@
             <input type="range" id="volOrig" min="0" max="100" value="60" oninput="applyVolumes()"></div>
           <div class="fader"><div class="frow"><label>总音量</label><span class="val" id="volMasterVal">100</span></div>
             <input type="range" id="volMaster" min="0" max="100" value="100" oninput="applyVolumes()"></div>
-          <div class="note" id="playHint">谱子合成音使用自托管真实鼓采样，首次播放会加载采样，稍等片刻。</div>
+          <div class="fader"><div class="frow"><label>对齐偏移</label><span class="val" id="offsetVal">0ms</span></div>
+            <input type="range" id="offset" min="-2000" max="2000" value="0" step="5" oninput="applyOffset()"></div>
+          <div class="frow" style="gap:6px;margin:-6px 0 6px">
+            <button class="btn ghost" style="padding:6px 10px;font-size:12px;min-height:0" onclick="nudgeOffset(-5)">−5ms</button>
+            <button class="btn ghost" style="padding:6px 10px;font-size:12px;min-height:0" onclick="nudgeOffset(5)">+5ms</button>
+            <button class="btn ghost" style="padding:6px 10px;font-size:12px;min-height:0" onclick="resetOffset()">归零</button>
+          </div>
+          <div class="note" id="playHint">谱子合成音使用自托管真实鼓采样，首次播放会加载采样，稍等片刻。<br>对齐偏移：正值=谱子合成音相对原声延后，负值=提前（步进 5ms）。</div>
         </div>
 
         <div class="grp hidden" id="dlGrp">
@@ -249,6 +259,7 @@
 
 <script>
 let mode='gen';
+let uploadTitle='';
 function setMode(m){
   mode=m;
   document.getElementById('m-gen').classList.toggle('on',m==='gen');
@@ -257,6 +268,7 @@ function setMode(m){
   document.getElementById('ctl-imp').classList.toggle('hidden',m!=='imp');
   document.getElementById('mainTitle').textContent = m==='gen'?'鼓谱预览':'导入预览';
   // reset preview + transport when switching
+  clearHighlight(); timemap=[];
   showPreview(null);
   document.getElementById('transport').classList.add('hidden');
   stopAll(); stopImp();
@@ -290,6 +302,7 @@ const STAGE_ZH={queued:'排队中',separation:'分离鼓组',transcription:'转 
 async function startUpload(){
   const f=document.getElementById('audioFile').files[0];
   if(!f){ alert('请先选择音频文件'); return; }
+  uploadTitle = f.name.replace(/\.[^.]+$/,'');
   const btn=document.getElementById('btnUpload'); btn.disabled=true;
   document.getElementById('progGrp').classList.remove('hidden');
   document.getElementById('playGrp').classList.add('hidden');
@@ -317,15 +330,17 @@ function poll(job_id,btn){
 }
 async function showResult(job_id){
   currentJob=job_id;
+  if(uploadTitle) document.getElementById('mainTitle').textContent = uploadTitle;
   document.getElementById('dlGrp').classList.remove('hidden');
   document.getElementById('dlLinks').innerHTML=['midi','musicxml','pdf','png'].map(n=>
     '<a href="/api/file/'+job_id+'/'+n+'" download>⬇ '+n+'</a>').join('');
   const svg=await(await fetch('/api/svg/'+job_id)).text(); showPreview(svg);
+  await loadTimemap('/api/timemap/'+job_id);
   document.getElementById('playGrp').classList.remove('hidden');
   document.getElementById('transport').classList.remove('hidden');
   const mp=document.getElementById('mp'); mp.src='/api/midi/'+job_id;
   activeMp=mp; activeSeek='seekBar';
-  pickSrc('original'); applyVolumes(); wireProgress();
+  pickSrc('original'); applyVolumes(); applyOffset(); wireProgress();
 }
 function pickSrc(kind){
   document.getElementById('src-original').classList.toggle('on',kind==='original');
@@ -357,7 +372,64 @@ function applyVolumes(){
   else document.getElementById('origAudio').volume=oe;
 }
 
-/* ---------------- transport (shared) ---------------- */
+/* ---------------- alignment offset (ms) ---------------- */
+let offsetMs = 0;   // + = drum synth later than original audio
+function applyOffset(){
+  offsetMs = +document.getElementById('offset').value;
+  document.getElementById('offsetVal').textContent = offsetMs + 'ms';
+  // live re-sync while playing: keep MIDI at (audio + offset)
+  resyncMidi();
+}
+function nudgeOffset(d){
+  const el=document.getElementById('offset');
+  el.value = Math.max(-2000, Math.min(2000, (+el.value)+d));
+  applyOffset();
+}
+function resetOffset(){ document.getElementById('offset').value=0; applyOffset(); }
+function resyncMidi(){
+  const b=document.getElementById('btnPlay');
+  if(b.dataset.playing!=='1' || !hasOrig) return;
+  const a=document.getElementById('origAudio'); const mp=activeMp;
+  if(!mp) return;
+  // + offset => drum synth LATER than original: MIDI plays audioTime - offset
+  const target = a.currentTime - offsetMs/1000;
+  try{ if(Math.abs((mp.currentTime||0)-target) > 0.05) mp.currentTime = Math.max(0,target); }catch(e){}
+}
+
+/* ---------------- playback highlight (verovio timemap) ---------------- */
+let timemap=[];          // [{tstamp(ms), on:[ids]}]
+let hlIds=[];            // currently highlighted element ids
+async function loadTimemap(url){
+  timemap=[]; hlIds=[];
+  try{
+    const d=await(await fetch(url)).json();
+    // normalize: keep entries that have 'on'
+    timemap = (Array.isArray(d)?d:[]).map(e=>({t:+e.tstamp||0, on:e.on||[]}))
+                                     .filter(e=>e.on.length).sort((x,y)=>x.t-y.t);
+  }catch(e){ timemap=[]; }
+}
+function clearHighlight(){
+  for(const id of hlIds){ const el=document.getElementById(id); if(el) el.classList.remove('aj-hl'); }
+  hlIds=[];
+}
+function highlightAt(ms){
+  if(!timemap.length) return;
+  // find last entry with t <= ms (binary search)
+  let lo=0,hi=timemap.length-1,idx=-1;
+  while(lo<=hi){ const m=(lo+hi)>>1; if(timemap[m].t<=ms){ idx=m; lo=m+1; } else hi=m-1; }
+  if(idx<0){ clearHighlight(); return; }
+  const ids=timemap[idx].on;
+  // only update DOM if changed
+  if(ids.length===hlIds.length && ids.every((v,i)=>v===hlIds[i])) return;
+  clearHighlight();
+  let firstEl=null;
+  for(const id of ids){ const el=document.getElementById(id); if(el){ el.classList.add('aj-hl'); hlIds.push(id); if(!firstEl) firstEl=el; } }
+  if(firstEl){ try{ firstEl.scrollIntoView({block:'center',inline:'nearest',behavior:'smooth'}); }catch(e){} }
+}
+function midiPlayMs(){
+  // current MIDI play position in ms (for highlight)
+  const mp=activeMp; return ((mp&&mp.currentTime)||0)*1000;
+}
 let seeking=false,progTimer=null,activeMp=null,activeSeek='seekBar',hasOrig=true;
 function curDur(){
   const a=document.getElementById('origAudio');
@@ -377,6 +449,7 @@ function tick(){
   document.getElementById('tCur').textContent=fmtTime(cur);
   document.getElementById('tDur').textContent=fmtTime(dur);
   document.getElementById('seekBar').value=dur>0?Math.round(cur/dur*1000):0;
+  highlightAt(midiPlayMs());
 }
 function onSeekInput(){ seeking=true; const {dur}=curDur();
   document.getElementById('tCur').textContent=fmtTime(+document.getElementById('seekBar').value/1000*dur); }
@@ -388,11 +461,16 @@ function setPlay(on){ const b=document.getElementById('btnPlay'); b.textContent=
 function onPlayClick(){ if(mode==='gen') togglePlay(); else toggleImpPlay(); }
 async function togglePlay(){
   const mp=document.getElementById('mp'), a=document.getElementById('origAudio'), b=document.getElementById('btnPlay');
-  if(b.dataset.playing==='1'){ try{mp.stop();}catch(e){} a.pause(); setPlay(false); return; }
+  if(b.dataset.playing==='1'){ try{mp.stop();}catch(e){} a.pause(); setPlay(false); clearHighlight(); return; }
   try{ if(window.Tone) await Tone.start(); }catch(e){}
   const g=ensureAudioGraph(); try{ if(g&&g.ctx.state==='suspended') await g.ctx.resume(); }catch(e){}
-  applyVolumes(); try{ await mp.start(); }catch(e){}
-  try{ a.currentTime=0; await a.play(); }catch(e){} setPlay(true);
+  applyVolumes();
+  a.currentTime=0;
+  try{ await mp.start(); }catch(e){}
+  try{ await a.play(); }catch(e){}
+  // apply alignment offset: MIDI position = audioTime - offset
+  try{ mp.currentTime = Math.max(0, -offsetMs/1000); }catch(e){}
+  setPlay(true);
 }
 function stopAll(){ const mp=document.getElementById('mp'),a=document.getElementById('origAudio');
   try{mp.stop();}catch(e){} a.pause(); a.currentTime=0; setPlay(false); }
@@ -410,6 +488,7 @@ async function startImport(){
   if(!r.ok){ document.getElementById('impStatus').textContent='失败: '+await r.text(); btn.disabled=false; setStatus('err','失败'); return; }
   const info=await r.json(); currentImp=info.import_id;
   const svg=await(await fetch('/api/import/'+currentImp+'/svg')).text(); showPreview(svg);
+  await loadTimemap('/api/import/'+currentImp+'/timemap');
   document.getElementById('impStatus').textContent='完成'; setStatus('done','完成');
   const mpImp=document.getElementById('mpImp');
   if(info.has_midi){
@@ -429,11 +508,11 @@ function wireProgressImp(){
 }
 async function toggleImpPlay(){
   const mp=document.getElementById('mpImp'),b=document.getElementById('btnPlay');
-  if(b.dataset.playing==='1'){ try{mp.stop();}catch(e){} setPlay(false); return; }
+  if(b.dataset.playing==='1'){ try{mp.stop();}catch(e){} setPlay(false); clearHighlight(); return; }
   try{ if(window.Tone) await Tone.start(); }catch(e){}
   applyImpVol(); try{ await mp.start(); }catch(e){} setPlay(true);
 }
-function stopImp(){ const mp=document.getElementById('mpImp'); try{mp.stop();}catch(e){} }
+function stopImp(){ const mp=document.getElementById('mpImp'); try{mp.stop();}catch(e){} clearHighlight(); }
 function applyImpVol(){ const v=+document.getElementById('volImp').value;
   document.getElementById('volImpVal').textContent=v;
   try{ if(window.Tone) Tone.getDestination().volume.value=pctToDb(v); }catch(e){} }

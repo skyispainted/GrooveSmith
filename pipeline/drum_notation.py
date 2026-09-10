@@ -53,7 +53,7 @@ def _make_unpitched(pitch, ql):
     return u
 
 
-def build_drum_score(midi_path, bpm=None, max_measures=200):
+def build_drum_score(midi_path, bpm=None, max_measures=200, title=None):
     pm = pretty_midi.PrettyMIDI(midi_path)
     if bpm is None:
         try:
@@ -97,7 +97,7 @@ def build_drum_score(midi_path, bpm=None, max_measures=200):
 
     sc = stream.Score()
     sc.insert(0, metadata.Metadata())
-    sc.metadata.title = "Drum Score"
+    sc.metadata.title = title if title else "Drum Score"
     part = stream.Part()
     perc = instrument.Percussion()
     perc.instrumentName = "Drum Set"

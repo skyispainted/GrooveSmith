@@ -83,12 +83,12 @@ def estimate_bpm(drums_wav):
         return None
 
 
-def to_musicxml(mid, outdir, bpm=None):
+def to_musicxml(mid, outdir, bpm=None, title=None):
     # Build proper drum-set notation (percussion clef, unpitched notes at standard
     # staff positions, x-noteheads for cymbals/hi-hat) instead of plain pitched notes.
     import drum_notation
     xml = os.path.join(outdir, "drums.musicxml")
-    sc = drum_notation.build_drum_score(mid, bpm=bpm)
+    sc = drum_notation.build_drum_score(mid, bpm=bpm, title=title)
     from music21.musicxml import m21ToXml
     data = m21ToXml.GeneralObjectExporter(sc).parse()
     with open(xml, "wb") as fh:
@@ -102,12 +102,26 @@ def render(xml, outdir):
     res = os.path.join(os.path.dirname(verovio.__file__), "data")
     tk = verovio.toolkit(False)
     tk.setResourcePath(res)
-    tk.setOptions({"pageHeight": 2000, "pageWidth": 1500, "scale": 40})
+    # tall single page so the whole score + playback highlight live in one SVG
+    tk.setOptions({"pageHeight": 60000, "pageWidth": 2100, "scale": 40, "adjustPageHeight": True})
     tk.loadFile(xml)
     tk.redoLayout()
     svg = os.path.join(outdir, "drums.svg")
     with open(svg, "w") as fh:
         fh.write(tk.renderToSVG(1))
+    # timemap: [{tstamp(ms), on:[svg element ids], ...}] for playback highlight
+    tmap = os.path.join(outdir, "timemap.json")
+    try:
+        tm = tk.renderToTimemap()
+        if not isinstance(tm, str):
+            import json as _json
+            tm = _json.dumps(tm)
+        with open(tmap, "w") as fh:
+            fh.write(tm)
+    except Exception as e:
+        log("timemap failed: " + repr(e))
+        with open(tmap, "w") as fh:
+            fh.write("[]")
     pdf = os.path.join(outdir, "drums.pdf")
     png = os.path.join(outdir, "drums.png")
     cairosvg.svg2pdf(url=svg, write_to=pdf)

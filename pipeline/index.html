@@ -105,10 +105,6 @@
   .score{position:relative;background:#fff;border-radius:12px;padding:16px;box-shadow:0 10px 40px rgba(0,0,0,.4);
     max-width:1100px;margin:0 auto;overflow:auto;}
   .score svg{max-width:100%;height:auto;display:block;margin:0 auto;}
-  /* playback cursor: a translucent bar moved via transform (GPU-composited, no reflow) */
-  #hlCursor{position:absolute;left:0;top:0;width:64px;height:34px;pointer-events:none;
-    background:rgba(225,29,72,.28);border-left:2px solid #e11d48;border-radius:3px;
-    transform:translate(-9999px,0);will-change:transform;display:none;z-index:5;}
   .empty{display:grid;place-items:center;height:100%;color:var(--dim);text-align:center;}
   .empty .big{font-size:44px;opacity:.5;} .empty .t{margin-top:12px;font-size:14px;}
 
@@ -191,11 +187,6 @@
             <button class="btn ghost" style="padding:6px 10px;font-size:12px;min-height:0" onclick="nudgeOffset(5)">+5ms</button>
             <button class="btn ghost" style="padding:6px 10px;font-size:12px;min-height:0" onclick="resetOffset()">归零</button>
           </div>
-          <label class="frow" style="gap:8px;align-items:center;cursor:pointer;margin:2px 0 4px">
-            <input type="checkbox" id="hlToggle" checked onchange="onHlToggle()">
-            <span style="font-size:13px;color:var(--txt)">播放高亮</span>
-            <span class="val" style="margin-left:auto">若卡顿可关闭</span>
-          </label>
           <div class="note" id="playHint">谱子合成音使用自托管真实鼓采样，首次播放会加载采样，稍等片刻。<br>对齐偏移：正值=谱子合成音相对原声延后，负值=提前（步进 5ms）。</div>
         </div>
 
@@ -238,7 +229,7 @@
     </div>
 
     <div class="stage">
-      <div class="score hidden" id="scoreWrap"><div id="hlCursor"></div><div id="preview"></div></div>
+      <div class="score hidden" id="scoreWrap"><div id="preview"></div></div>
       <div class="empty" id="emptyState">
         <div>
           <div class="big">🥁</div>
@@ -274,7 +265,6 @@ function setMode(m){
   document.getElementById('ctl-imp').classList.toggle('hidden',m!=='imp');
   document.getElementById('mainTitle').textContent = m==='gen'?'鼓谱预览':'导入预览';
   // reset preview + transport when switching
-  clearHighlight(); timemap=[];
   showPreview(null);
   document.getElementById('transport').classList.add('hidden');
   stopAll(); stopImp();
@@ -342,7 +332,6 @@ async function showResult(job_id){
   document.getElementById('dlLinks').innerHTML=['midi','musicxml','pdf','png'].map(n=>
     '<a href="/api/file/'+job_id+'/'+n+'" download>⬇ '+n+'</a>').join('');
   const svg=await(await fetch('/api/svg/'+job_id)).text(); showPreview(svg);
-  await loadTimemap('/api/timemap/'+job_id);
   document.getElementById('playGrp').classList.remove('hidden');
   document.getElementById('transport').classList.remove('hidden');
   const mp=document.getElementById('mp'); mp.src='/api/midi/'+job_id;
@@ -403,10 +392,7 @@ function resyncMidi(){
   try{ if(Math.abs((mp.currentTime||0)-target) > 0.05) mp.currentTime = Math.max(0,target); }catch(e){}
 }
 
-/* ---------------- playback highlight (verovio timemap) ---------------- */
-let timemap=[];          // [{tstamp(ms), on:[ids]}]
-let hlIds=[];            // currently highlighted element ids
-
+/* ---------------- drum-sample preload ---------------- */
 /* preload drum samples into browser cache so playback doesn't stall on network fetch */
 let sfPreloaded=false;
 function preloadSoundfont(){
@@ -414,7 +400,6 @@ function preloadSoundfont(){
   const vel=[15,31,47,63,79,95,111,127];
   const base='/static/soundfonts/sgm_plus/percussion/';
   let i=0;
-  // fetch gradually to avoid a burst; browser caches them
   function next(){
     if(i>=(81-35+1)) return;
     const p=35+i; i++;
@@ -422,93 +407,6 @@ function preloadSoundfont(){
     setTimeout(next, 60);
   }
   next();
-}
-async function loadTimemap(url){
-  timemap=[]; hlIds=[]; noteXY={}; svgScale=0;
-  try{
-    const d=await(await fetch(url)).json();
-    timemap = (Array.isArray(d)?d:[]).map(e=>({t:+e.tstamp||0, on:e.on||[]}))
-                                     .filter(e=>e.on.length).sort((x,y)=>x.t-y.t);
-  }catch(e){ timemap=[]; }
-  buildNoteCache();
-}
-/* cache each note's SVG-space x/y once; compute svg->pixel scale and the svg's
-   offset within the .score box ONCE. The rAF loop then only moves a cursor overlay
-   via transform (GPU-composited: no reflow, no style recalc on the big SVG). */
-let noteXY={}, svgScale=0, svgEl=null, svgOffX=0, svgOffY=0;
-function buildNoteCache(){
-  noteXY={}; svgScale=0; svgOffX=0; svgOffY=0;
-  const scoreBox=document.getElementById('scoreWrap'); if(!scoreBox) return;
-  svgEl=scoreBox.querySelector('svg'); if(!svgEl) return;
-  const notes=svgEl.querySelectorAll('g.note');
-  const re=/translate\(\s*([\-0-9.]+)[ ,]+([\-0-9.]+)/;
-  notes.forEach(n=>{
-    const u=n.querySelector('.notehead use, use');
-    if(!u) return;
-    const t=u.getAttribute('transform')||''; const m=t.match(re);
-    if(m) noteXY[n.id]={x:+m[1], y:+m[2]};
-  });
-  try{
-    const vb=svgEl.viewBox&&svgEl.viewBox.baseVal;
-    const rect=svgEl.getBoundingClientRect();
-    const boxRect=scoreBox.getBoundingClientRect();
-    let unitH=(vb&&vb.height>0)?vb.height:(parseFloat(svgEl.getAttribute('height'))||0);
-    if(unitH>0) svgScale=rect.height/unitH;
-    // svg top-left relative to the scrollable .score content box (account for scroll)
-    svgOffX=(rect.left-boxRect.left)+scoreBox.scrollLeft;
-    svgOffY=(rect.top-boxRect.top)+scoreBox.scrollTop;
-  }catch(e){ svgScale=0; }
-}
-function clearHighlight(){
-  const c=document.getElementById('hlCursor'); if(c){ c.style.display='none'; c.style.transform='translate(-9999px,0)'; }
-}
-let lastScrollT=0, curIdx=-1;
-function highlightAt(ms){
-  if(!timemap.length) return;
-  let lo=0,hi=timemap.length-1,idx=-1;
-  while(lo<=hi){ const m=(lo+hi)>>1; if(timemap[m].t<=ms){ idx=m; lo=m+1; } else hi=m-1; }
-  if(idx===curIdx) return;      // position unchanged -> nothing to do
-  curIdx=idx;
-  if(idx<0){ clearHighlight(); return; }
-  // representative note of this beat (first id)
-  let firstId=null; const ids=timemap[idx].on;
-  for(const id of ids){ if(noteXY[id]){ firstId=id; break; } }
-  const c=document.getElementById('hlCursor');
-  if(!firstId || !svgScale || !c){ return; }
-  const nx=noteXY[firstId].x*svgScale + svgOffX;
-  const ny=noteXY[firstId].y*svgScale + svgOffY;
-  // move the cursor bar (compositor only). center it vertically on the note line.
-  c.style.display='block';
-  c.style.transform='translate('+(nx-18)+'px,'+(ny-24)+'px)';
-  // keep the current position in view (cheap: use cached ny, throttled)
-  const now=performance.now();
-  if(now-lastScrollT>350){
-    const box=document.querySelector('.stage');
-    if(box){
-      const target=ny - box.clientHeight*0.4;
-      if(Math.abs(box.scrollTop-target)>box.clientHeight*0.5){ box.scrollTop=Math.max(0,target); lastScrollT=now; }
-    }
-  }
-}
-function midiPlayMs(){
-  const mp=activeMp; return ((mp&&mp.currentTime)||0)*1000;
-}
-
-/* rAF loop drives smooth highlight without touching the audio path or forcing layout */
-let rafId=null;
-function hlEnabled(){ const c=document.getElementById('hlToggle'); return !c || c.checked; }
-function startHlLoop(){
-  stopHlLoop(); curIdx=-1;
-  if(!hlEnabled()) return;          // highlight off -> zero overhead
-  if(!svgScale) buildNoteCache();
-  const step=()=>{ highlightAt(midiPlayMs()); rafId=requestAnimationFrame(step); };
-  rafId=requestAnimationFrame(step);
-}
-function stopHlLoop(){ if(rafId){ cancelAnimationFrame(rafId); rafId=null; } }
-function onHlToggle(){
-  const playing=document.getElementById('btnPlay').dataset.playing==='1';
-  if(hlEnabled()){ if(playing) startHlLoop(); }
-  else{ stopHlLoop(); clearHighlight(); }
 }
 let seeking=false,progTimer=null,activeMp=null,activeSeek='seekBar',hasOrig=true;
 function curDur(){
@@ -548,7 +446,6 @@ function onSeekCommit(){
     try{ if(mp && playing) mp.currentTime=v; }catch(e){}
     pendingMidiSeek = playing ? null : v;
   }
-  curIdx=-1;                 // force highlight refresh at new position
   seeking=false;
 }
 let pendingMidiSeek=null;
@@ -556,7 +453,7 @@ function setPlay(on){ const b=document.getElementById('btnPlay'); b.textContent=
 function onPlayClick(){ if(mode==='gen') togglePlay(); else toggleImpPlay(); }
 async function togglePlay(){
   const mp=document.getElementById('mp'), a=document.getElementById('origAudio'), b=document.getElementById('btnPlay');
-  if(b.dataset.playing==='1'){ try{mp.stop();}catch(e){} a.pause(); setPlay(false); stopHlLoop(); clearHighlight(); return; }
+  if(b.dataset.playing==='1'){ try{mp.stop();}catch(e){} a.pause(); setPlay(false); return; }
   try{ if(window.Tone) await Tone.start(); }catch(e){}
   const g=ensureAudioGraph(); try{ if(g&&g.ctx.state==='suspended') await g.ctx.resume(); }catch(e){}
   applyVolumes();
@@ -571,10 +468,10 @@ async function togglePlay(){
   const mtarget = Math.max(0, (pendingMidiSeek!=null?pendingMidiSeek:(startSec - offsetMs/1000)));
   try{ mp.currentTime = mtarget; }catch(e){}
   pendingMidiSeek=null;
-  setPlay(true); startHlLoop();
+  setPlay(true);
 }
 function stopAll(){ const mp=document.getElementById('mp'),a=document.getElementById('origAudio');
-  try{mp.stop();}catch(e){} a.pause(); a.currentTime=0; setPlay(false); stopHlLoop(); clearHighlight(); }
+  try{mp.stop();}catch(e){} a.pause(); a.currentTime=0; setPlay(false); }
 
 /* ---------------- import ---------------- */
 let currentImp=null;
@@ -590,7 +487,6 @@ async function startImport(){
   const info=await r.json(); currentImp=info.import_id;
   preloadSoundfont();
   const svg=await(await fetch('/api/import/'+currentImp+'/svg')).text(); showPreview(svg);
-  await loadTimemap('/api/import/'+currentImp+'/timemap');
   document.getElementById('impStatus').textContent='完成'; setStatus('done','完成');
   const mpImp=document.getElementById('mpImp');
   if(info.has_midi){
@@ -610,14 +506,14 @@ function wireProgressImp(){
 }
 async function toggleImpPlay(){
   const mp=document.getElementById('mpImp'),b=document.getElementById('btnPlay');
-  if(b.dataset.playing==='1'){ try{mp.stop();}catch(e){} setPlay(false); stopHlLoop(); clearHighlight(); return; }
+  if(b.dataset.playing==='1'){ try{mp.stop();}catch(e){} setPlay(false); return; }
   try{ if(window.Tone) await Tone.start(); }catch(e){}
   applyImpVol();
   try{ await mp.start(); }catch(e){}
   if(pendingMidiSeek!=null){ try{ mp.currentTime=pendingMidiSeek; }catch(e){} pendingMidiSeek=null; }
-  setPlay(true); startHlLoop();
+  setPlay(true);
 }
-function stopImp(){ const mp=document.getElementById('mpImp'); try{mp.stop();}catch(e){} stopHlLoop(); clearHighlight(); }
+function stopImp(){ const mp=document.getElementById('mpImp'); try{mp.stop();}catch(e){} }
 function applyImpVol(){ const v=+document.getElementById('volImp').value;
   document.getElementById('volImpVal').textContent=v;
   try{ if(window.Tone) Tone.getDestination().volume.value=pctToDb(v); }catch(e){} }

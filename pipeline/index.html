@@ -105,9 +105,10 @@
   .score{background:#fff;border-radius:12px;padding:16px;box-shadow:0 10px 40px rgba(0,0,0,.4);
     max-width:1100px;margin:0 auto;overflow:auto;}
   .score svg{max-width:100%;height:auto;display:block;margin:0 auto;}
-  /* playback highlight: color the currently-sounding note(s) */
-  .score svg g.aj-hl,
-  .score svg g.aj-hl * { fill:#e11d48 !important; stroke:#e11d48 !important; }
+  /* playback highlight: color the currently-sounding note (cheap: direct children only) */
+  .score svg g.aj-hl>.notehead>use,
+  .score svg g.aj-hl>.notehead>g>use{ fill:#e11d48; }
+  .score svg g.aj-hl>.notehead{ fill:#e11d48; }
   .empty{display:grid;place-items:center;height:100%;color:var(--dim);text-align:center;}
   .empty .big{font-size:44px;opacity:.5;} .empty .t{margin-top:12px;font-size:14px;}
 
@@ -190,6 +191,11 @@
             <button class="btn ghost" style="padding:6px 10px;font-size:12px;min-height:0" onclick="nudgeOffset(5)">+5ms</button>
             <button class="btn ghost" style="padding:6px 10px;font-size:12px;min-height:0" onclick="resetOffset()">归零</button>
           </div>
+          <label class="frow" style="gap:8px;align-items:center;cursor:pointer;margin:2px 0 4px">
+            <input type="checkbox" id="hlToggle" checked onchange="onHlToggle()">
+            <span style="font-size:13px;color:var(--txt)">播放高亮</span>
+            <span class="val" style="margin-left:auto">若卡顿可关闭</span>
+          </label>
           <div class="note" id="playHint">谱子合成音使用自托管真实鼓采样，首次播放会加载采样，稍等片刻。<br>对齐偏移：正值=谱子合成音相对原声延后，负值=提前（步进 5ms）。</div>
         </div>
 
@@ -418,39 +424,66 @@ function preloadSoundfont(){
   next();
 }
 async function loadTimemap(url){
-  timemap=[]; hlIds=[];
+  timemap=[]; hlIds=[]; noteXY={}; svgScale=0;
   try{
     const d=await(await fetch(url)).json();
-    // normalize: keep entries that have 'on'
     timemap = (Array.isArray(d)?d:[]).map(e=>({t:+e.tstamp||0, on:e.on||[]}))
                                      .filter(e=>e.on.length).sort((x,y)=>x.t-y.t);
   }catch(e){ timemap=[]; }
+  buildNoteCache();
+}
+/* cache each note's SVG-space y once (from notehead <use transform="translate(x,y)">),
+   so the rAF loop never calls getBoundingClientRect (which forces layout on a huge SVG). */
+let noteXY={}, svgScale=0, svgEl=null;
+function buildNoteCache(){
+  noteXY={}; svgScale=0;
+  const box=document.querySelector('.stage'); if(!box) return;
+  svgEl=box.querySelector('svg'); if(!svgEl) return;
+  const notes=svgEl.querySelectorAll('g.note');
+  const re=/translate\(\s*([\-0-9.]+)[ ,]+([\-0-9.]+)/;
+  notes.forEach(n=>{
+    const u=n.querySelector('.notehead use, use');
+    if(!u) return;
+    const t=u.getAttribute('transform')||''; const m=t.match(re);
+    if(m) noteXY[n.id]={x:+m[1], y:+m[2]};
+  });
+  // svg-units -> rendered pixels scale (measured ONCE)
+  try{
+    const vb=svgEl.viewBox&&svgEl.viewBox.baseVal;
+    const rect=svgEl.getBoundingClientRect();
+    if(vb && vb.height>0) svgScale=rect.height/vb.height;
+    else{
+      const hAttr=parseFloat(svgEl.getAttribute('height'))||0;
+      if(hAttr>0) svgScale=rect.height/hAttr;
+    }
+  }catch(e){ svgScale=0; }
 }
 function clearHighlight(){
   for(const id of hlIds){ const el=document.getElementById(id); if(el) el.classList.remove('aj-hl'); }
   hlIds=[];
 }
-let lastScrollT=0;
+let lastScrollT=0, curIdx=-1;
 function highlightAt(ms){
   if(!timemap.length) return;
   let lo=0,hi=timemap.length-1,idx=-1;
   while(lo<=hi){ const m=(lo+hi)>>1; if(timemap[m].t<=ms){ idx=m; lo=m+1; } else hi=m-1; }
+  if(idx===curIdx) return;      // nothing changed this frame -> do nothing (no reflow)
+  curIdx=idx;
   if(idx<0){ if(hlIds.length) clearHighlight(); return; }
   const ids=timemap[idx].on;
-  if(ids.length===hlIds.length && ids.every((v,i)=>v===hlIds[i])) return; // unchanged
   clearHighlight();
-  let firstEl=null;
-  for(const id of ids){ const el=document.getElementById(id); if(el){ el.classList.add('aj-hl'); hlIds.push(id); if(!firstEl) firstEl=el; } }
-  // keep current note in view, but cheaply: instant scroll, only if off-screen, throttled
-  if(firstEl){
+  let firstId=null;
+  for(const id of ids){ const el=document.getElementById(id); if(el){ el.classList.add('aj-hl'); hlIds.push(id); if(!firstId) firstId=id; } }
+  // auto-scroll using CACHED svg-space y -> pixels (no getBoundingClientRect per change)
+  if(firstId && noteXY[firstId] && svgScale>0){
     const now=performance.now();
-    if(now-lastScrollT>400){
+    if(now-lastScrollT>350){
       const box=document.querySelector('.stage');
       if(box){
-        const br=box.getBoundingClientRect(), er=firstEl.getBoundingClientRect();
-        if(er.top<br.top+60 || er.bottom>br.bottom-60){
-          box.scrollTop += (er.top - br.top) - box.clientHeight*0.35;
-          lastScrollT=now;
+        const yPx=noteXY[firstId].y*svgScale;                 // note y within svg, in px
+        const target=yPx - box.clientHeight*0.4;              // put note ~40% down
+        if(Math.abs(box.scrollTop-target)>box.clientHeight*0.5){
+          box.scrollTop=Math.max(0,target); lastScrollT=now;
         }
       }
     }
@@ -460,14 +493,22 @@ function midiPlayMs(){
   const mp=activeMp; return ((mp&&mp.currentTime)||0)*1000;
 }
 
-/* rAF loop drives smooth highlight without touching the audio path */
+/* rAF loop drives smooth highlight without touching the audio path or forcing layout */
 let rafId=null;
+function hlEnabled(){ const c=document.getElementById('hlToggle'); return !c || c.checked; }
 function startHlLoop(){
-  stopHlLoop();
+  stopHlLoop(); curIdx=-1;
+  if(!hlEnabled()) return;          // highlight off -> zero overhead
+  if(!svgScale) buildNoteCache();
   const step=()=>{ highlightAt(midiPlayMs()); rafId=requestAnimationFrame(step); };
   rafId=requestAnimationFrame(step);
 }
 function stopHlLoop(){ if(rafId){ cancelAnimationFrame(rafId); rafId=null; } }
+function onHlToggle(){
+  const playing=document.getElementById('btnPlay').dataset.playing==='1';
+  if(hlEnabled()){ if(playing) startHlLoop(); }
+  else{ stopHlLoop(); clearHighlight(); }
+}
 let seeking=false,progTimer=null,activeMp=null,activeSeek='seekBar',hasOrig=true;
 function curDur(){
   const a=document.getElementById('origAudio');

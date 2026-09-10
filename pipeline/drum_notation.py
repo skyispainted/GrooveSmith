@@ -1,37 +1,39 @@
 #!/usr/bin/env python3
-"""Convert a GM-channel-10 drum MIDI into proper drum-set MusicXML
-(percussion clef, unpitched notes at standard staff positions, x-noteheads for cymbals/hi-hat).
+"""Convert a GM-channel-10 drum MIDI into proper drum-set MusicXML.
 
-Standard drum-set notation layout (5-line staff, percussion clef).
-We place notes by (display-step, display-octave) matching the common convention, and
-choose notehead shape per instrument (x / circle-x / normal / diamond).
+Percussion clef, unpitched notes at standard staff positions (percussion clef is
+treated like treble clef per MusicXML spec), x-noteheads for cymbals/hi-hat.
+
+Rhythm handling:
+- tempo can be supplied (estimated from the drums stem upstream); else read from MIDI.
+- the silent intro before the first drum hit is trimmed (bars start at the first hit,
+  aligned to the beat grid).
+- empty slots are merged into the largest possible rests instead of 16th-rest spam.
 """
 import sys
 import pretty_midi
-from music21 import stream, note, percussion, clef, meter, duration, tempo, layout, instrument
+from music21 import stream, note, percussion, clef, meter, duration, tempo, instrument, metadata
 from music21.musicxml import m21ToXml
 
-# GM percussion (MIDI note) -> (display pitch on staff, notehead, name)
-# display pitch uses standard treble/perc-clef positions used by MuseScore drumset.
-# Format: midi_pitch: (step, octave, notehead)
-# notehead: "x" (cymbals/hihat), "circle-x" (open hh), "normal" (drums), "diamond" (ride bell / cymbal choke opt)
+# GM percussion (MIDI note) -> (display step, octave, notehead) on a percussion(=treble) clef.
+# Standard drum-set layout (matches common MuseScore/Guitar Pro convention).
 DRUM_MAP = {
     35: ("F", 4, "normal"),   # Acoustic Bass Drum
-    36: ("F", 4, "normal"),   # Bass Drum 1  (bottom space, F4 in treble->perc)
-    38: ("C", 5, "normal"),   # Acoustic Snare (3rd space)
+    36: ("F", 4, "normal"),   # Bass Drum 1
+    38: ("C", 5, "normal"),   # Acoustic Snare
     40: ("C", 5, "normal"),   # Electric Snare
-    37: ("C", 5, "x"),        # Side Stick -> snare line, x
+    37: ("C", 5, "x"),        # Side Stick
     39: ("C", 5, "x"),        # Hand Clap
-    41: ("A", 4, "normal"),   # Low Floor Tom
+    41: ("F", 4, "normal"),   # Low Floor Tom
     43: ("A", 4, "normal"),   # High Floor Tom
     45: ("D", 5, "normal"),   # Low Tom
     47: ("E", 5, "normal"),   # Low-Mid Tom
     48: ("E", 5, "normal"),   # Hi-Mid Tom
     50: ("F", 5, "normal"),   # High Tom
-    42: ("G", 5, "x"),        # Closed Hi-Hat (top, x)
-    44: ("D", 4, "x"),        # Pedal Hi-Hat (below staff, x)
-    46: ("G", 5, "circle-x"), # Open Hi-Hat (x with circle)
-    49: ("A", 5, "x"),        # Crash Cymbal 1 (above top line, x)
+    42: ("G", 5, "x"),        # Closed Hi-Hat
+    44: ("D", 4, "x"),        # Pedal Hi-Hat (below staff)
+    46: ("G", 5, "circle-x"), # Open Hi-Hat
+    49: ("A", 5, "x"),        # Crash Cymbal 1
     57: ("A", 5, "x"),        # Crash Cymbal 2
     51: ("F", 5, "x"),        # Ride Cymbal 1
     59: ("F", 5, "x"),        # Ride Cymbal 2
@@ -42,88 +44,113 @@ DRUM_MAP = {
 DEFAULT = ("C", 5, "normal")
 
 
-def build_drum_score(midi_path, bpm_default=120):
-    pm = pretty_midi.PrettyMIDI(midi_path)
-    # tempo
-    try:
-        _, tempi = pm.get_tempo_changes()
-        bpm = float(tempi[0]) if len(tempi) else bpm_default
-    except Exception:
-        bpm = bpm_default
+def _make_unpitched(pitch, ql):
+    step, octv, nh = DRUM_MAP.get(pitch, DEFAULT)
+    u = note.Unpitched(displayName=f"{step}{octv}")
+    u.duration = duration.Duration(ql)
+    if nh in ("x", "circle-x", "diamond"):
+        u.notehead = nh
+    return u
 
-    # collect drum note onsets (seconds) from any is_drum instrument
+
+def build_drum_score(midi_path, bpm=None, max_measures=200):
+    pm = pretty_midi.PrettyMIDI(midi_path)
+    if bpm is None:
+        try:
+            _, tempi = pm.get_tempo_changes()
+            bpm = float(tempi[0]) if len(tempi) else 120.0
+        except Exception:
+            bpm = 120.0
+    if not bpm or bpm <= 0:
+        bpm = 120.0
+
     events = []
     for inst in pm.instruments:
-        if inst.is_drum or True:  # ADTOF marks is_drum; accept all to be safe
-            for n in inst.notes:
-                events.append((n.start, n.pitch, n.velocity))
+        for n in inst.notes:
+            events.append((float(n.start), int(n.pitch)))
     events.sort()
+    if not events:
+        events = []
 
     sec_per_beat = 60.0 / bpm
-    # quantize onsets to 16th grid
-    grid = sec_per_beat / 4.0
+    grid = sec_per_beat / 4.0          # 16th-note grid
+    slots_per_measure = 16             # 4/4, sixteenths
+
+    # trim silent intro: shift so the first hit lands at the start of a measure
+    if events:
+        first = events[0][0]
+        # align first hit to a measure boundary just before it
+        origin = first
+    else:
+        origin = 0.0
+
+    # bucket pitches by quantized 16th slot (relative to origin)
+    slots = {}
+    for start, pitch in events:
+        q = int(round((start - origin) / grid))
+        if q < 0:
+            q = 0
+        slots.setdefault(q, set()).add(pitch)
+
+    max_slot = max(slots.keys()) if slots else 0
+    total_measures = min(max_measures, max_slot // slots_per_measure + 1)
 
     sc = stream.Score()
-    from music21 import metadata
     sc.insert(0, metadata.Metadata())
     sc.metadata.title = "Drum Score"
-    sc.metadata.composer = ""
     part = stream.Part()
     perc = instrument.Percussion()
     perc.instrumentName = "Drum Set"
-    perc.instrumentAbbreviation = "D. S."
+    perc.instrumentAbbreviation = "D.S."
     part.insert(0, perc)
     part.insert(0, clef.PercussionClef())
     part.insert(0, meter.TimeSignature("4/4"))
     part.insert(0, tempo.MetronomeMark(number=round(bpm)))
 
-    # group events by quantized 16th slot; make each a percussion note (or chord)
-    from collections import defaultdict
-    slots = defaultdict(list)
-    for start, pitch, vel in events:
-        q = round(start / grid)
-        slots[q].append(pitch)
-
-    if not slots:
-        maxslot = 0
-    else:
-        maxslot = max(slots.keys())
-
-    beats_per_measure = 4
-    slots_per_measure = beats_per_measure * 4  # 16th notes
-
-    total_measures = maxslot // slots_per_measure + 1
-    ql_per_slot = 0.25  # 16th note = 0.25 quarterLength
+    QL = 0.25  # a 16th note
 
     for m_idx in range(total_measures):
         meas = stream.Measure(number=m_idx + 1)
-        for s in range(slots_per_measure):
-            slot = m_idx * slots_per_measure + s
-            pitches = slots.get(slot, [])
-            off = s * ql_per_slot
-            if not pitches:
-                r = note.Rest(quarterLength=ql_per_slot)
-                meas.insert(off, r)
-            else:
-                unps = []
-                for p in sorted(set(pitches)):
-                    step, octv, nh = DRUM_MAP.get(p, DEFAULT)
-                    u = note.Unpitched(displayName=f"{step}{octv}")
-                    u.duration = duration.Duration(ql_per_slot)
-                    if nh == "x":
-                        u.notehead = "x"
-                    elif nh == "circle-x":
-                        u.notehead = "circle-x"
-                    elif nh == "diamond":
-                        u.notehead = "diamond"
-                    unps.append(u)
+        base = m_idx * slots_per_measure
+        s = 0
+        while s < slots_per_measure:
+            slot = base + s
+            hit = slots.get(slot)
+            if hit:
+                unps = [_make_unpitched(p, QL) for p in sorted(hit)]
                 if len(unps) == 1:
-                    meas.insert(off, unps[0])
+                    meas.append(unps[0])
                 else:
                     ch = percussion.PercussionChord(unps)
-                    ch.duration = duration.Duration(ql_per_slot)
-                    meas.insert(off, ch)
-        meas.makeBeams(inPlace=True)
+                    ch.duration = duration.Duration(QL)
+                    meas.append(ch)
+                s += 1
+            else:
+                # merge consecutive empty slots into one rest, but do not cross
+                # beat boundaries messily: cap rest length to remaining slots and
+                # to a run of empties.
+                run = 0
+                while s + run < slots_per_measure and not slots.get(base + s + run):
+                    run += 1
+                # split run into note-values that align to the grid (max whole=16 slots)
+                start_s = s
+                remaining = run
+                pos = start_s
+                while remaining > 0:
+                    # largest power-of-two chunk that fits and aligns to pos
+                    chunk = 1
+                    for c in (16, 8, 4, 2, 1):
+                        if c <= remaining and pos % c == 0:
+                            chunk = c
+                            break
+                    meas.append(note.Rest(quarterLength=QL * chunk))
+                    pos += chunk
+                    remaining -= chunk
+                s += run
+        try:
+            meas.makeBeams(inPlace=True)
+        except Exception:
+            pass
         part.append(meas)
 
     sc.insert(0, part)
@@ -133,9 +160,9 @@ def build_drum_score(midi_path, bpm_default=120):
 def main():
     midi_path = sys.argv[1]
     out_xml = sys.argv[2]
-    sc = build_drum_score(midi_path)
-    exporter = m21ToXml.GeneralObjectExporter(sc)
-    data = exporter.parse()
+    bpm = float(sys.argv[3]) if len(sys.argv) > 3 else None
+    sc = build_drum_score(midi_path, bpm=bpm)
+    data = m21ToXml.GeneralObjectExporter(sc).parse()
     with open(out_xml, "wb") as fh:
         fh.write(data)
     print("WROTE", out_xml)

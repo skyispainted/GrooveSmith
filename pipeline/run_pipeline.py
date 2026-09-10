@@ -41,12 +41,30 @@ def transcribe(drums_wav, outdir, device):
     return mid
 
 
-def to_musicxml(mid, outdir):
+def estimate_bpm(drums_wav):
+    """Estimate tempo from the drums stem; fall back to None on failure."""
+    try:
+        import librosa
+        y, sr = librosa.load(drums_wav, sr=22050, mono=True)
+        tempo_val, _ = librosa.beat.beat_track(y=y, sr=sr)
+        bpm = float(tempo_val if not hasattr(tempo_val, "__len__") else tempo_val[0])
+        # fold into a musically sane range
+        while bpm and bpm < 70:
+            bpm *= 2
+        while bpm and bpm > 180:
+            bpm /= 2
+        return round(bpm, 2) if bpm and bpm > 0 else None
+    except Exception as e:
+        log("bpm estimate failed: " + repr(e))
+        return None
+
+
+def to_musicxml(mid, outdir, bpm=None):
     # Build proper drum-set notation (percussion clef, unpitched notes at standard
     # staff positions, x-noteheads for cymbals/hi-hat) instead of plain pitched notes.
     import drum_notation
     xml = os.path.join(outdir, "drums.musicxml")
-    sc = drum_notation.build_drum_score(mid)
+    sc = drum_notation.build_drum_score(mid, bpm=bpm)
     from music21.musicxml import m21ToXml
     data = m21ToXml.GeneralObjectExporter(sc).parse()
     with open(xml, "wb") as fh:
@@ -97,8 +115,11 @@ def main():
     log("STAGE 2/4 transcription (ADTOF-pytorch)")
     mid = transcribe(drums, args.outdir, dev)
 
+    bpm = estimate_bpm(drums)
+    log("estimated bpm = " + str(bpm))
+
     log("STAGE 3/4 MIDI to MusicXML (music21)")
-    xml = to_musicxml(mid, args.outdir)
+    xml = to_musicxml(mid, args.outdir, bpm=bpm)
 
     log("STAGE 4/4 render to SVG/PDF/PNG (verovio + cairosvg)")
     svg, pdf, png = render(xml, args.outdir)

@@ -63,9 +63,9 @@ CORE = CORE_KICK | CORE_SNARE | CORE_HAT
 STANDARD_EXTRA = {49, 57, 51, 59, 53, 50, 48, 47, 45}
 
 DIFFICULTY = {
-    "simple":   {"grid": 2, "keep": CORE,                  "collapse": True},   # 8th grid, kick/snare/hat only
-    "standard": {"grid": 4, "keep": CORE | STANDARD_EXTRA, "collapse": False},  # 16th, + ride/crash/toms
-    "full":     {"grid": 4, "keep": None,                  "collapse": False},  # everything
+    "simple":   {"grid": 2, "keep": CORE,                  "collapse": True,  "fill_hat": True},   # 8th grid, kick/snare/hat only, steady hat
+    "standard": {"grid": 4, "keep": CORE | STANDARD_EXTRA, "collapse": False, "fill_hat": True},   # 16th, + ride/crash/toms, steady hat
+    "full":     {"grid": 4, "keep": None,                  "collapse": False, "fill_hat": False},  # everything, faithful to AI
 }
 
 # collapse map for simple mode: any tom -> a single mid tom voice-1 note; splash/china -> crash
@@ -156,7 +156,7 @@ def build_drum_score(midi_path, bpm=None, max_measures=200, title=None, difficul
     slots_per_measure = 4 * subdiv               # 4/4
     QL = 1.0 / subdiv                            # quarterLength of one grid step
 
-    # split into hand (voice1) / foot (voice2) buckets, keyed by absolute 16th slot
+    # split into hand (voice1) / foot (voice2) buckets, keyed by grid slot
     hands = {}
     feet = {}
     for start, pitch in events:
@@ -164,6 +164,37 @@ def build_drum_score(midi_path, bpm=None, max_measures=200, title=None, difficul
         if q < 0:
             q = 0
         (feet if pitch in FEET else hands).setdefault(q, []).append(pitch)
+
+    # --- hi-hat / ride continuity pass ---------------------------------------
+    # AI transcription drops hi-hat hits, leaving isolated notes that cannot beam
+    # (you can't beam across a rest). When a region has a steady cymbal pulse, fill
+    # the missing subdivisions so the top line reads as clean beamed runs.
+    # Controlled by the difficulty preset; off for "full" (stay faithful to AI).
+    if preset.get("fill_hat"):
+        CYM = {42, 46, 51, 59, 53, 49, 57, 55, 52}   # hi-hat / ride / crash family
+        HAT = 42                                     # closed hi-hat as the fille
+        # work measure by measure on an 8th-note pulse (every `subdiv/2` slots)
+        step = max(1, subdiv // 2)                   # 8th-note step on the current grid
+        max_slot2 = max((max(hands.keys()) if hands else 0),
+                        (max(feet.keys()) if feet else 0))
+        n_meas = max_slot2 // slots_per_measure + 1
+        for mi in range(n_meas):
+            b0 = mi * slots_per_measure
+            # does this measure have any cymbal activity?
+            cym_slots = [s for s in range(b0, b0 + slots_per_measure)
+                         if s in hands and any(p in CYM for p in hands[s])]
+            if len(cym_slots) < 2:
+                continue                              # not a steady pulse -> leave as is
+            first, last = min(cym_slots), max(cym_slots)
+            # snap the run to 8th positions and fill every 8th between first & last
+            for s in range(b0, b0 + slots_per_measure, step):
+                if s < first or s > last:
+                    continue
+                cur = hands.get(s, [])
+                if not any(p in CYM for p in cur):
+                    cur = list(cur) + [HAT]           # add a hi-hat where the pulse is missing
+                    hands[s] = cur
+    # -------------------------------------------------------------------------
 
     all_slots = list(hands.keys()) + list(feet.keys())
     max_slot = max(all_slots) if all_slots else 0

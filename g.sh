@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 cd /mnt/e/projects/audio-jam
-rm -f v.txt rb.log rend.txt beam.txt beam2.txt insp.txt vtest.sh 2>/dev/null
-rm -f pipeline/_inspectxml.py pipeline/_beamtest.py pipeline/_beamtest2.py pipeline/_rend.py pipeline/_r3.py pipeline/_mksimple.py 2>/dev/null
-rm -f data/inspect.musicxml data/fixed.* data/simple.* 2>/dev/null
+rm -f bc.txt fx.txt c.txt gs.txt rb.log fixcu.py 2>/dev/null
+rm -f pipeline/_gridstat.py pipeline/_beamcount.py pipeline/_gen1.py pipeline/_rend.py 2>/dev/null
+rm -f data/cmp.* data/inspect.musicxml data/fixed.* 2>/dev/null
 git add -A
-git commit -q -m "fix drum notation cleanliness: beams now generate (makeBeams on Measure not Voice, which was throwing), hide feet-voice rests (print-object=no) to remove double-rest clutter, stems locked up/down per voice" >/dev/null 2>&1
+git commit -q -m "notation: hi-hat/ride continuity pass to fill AI-missed cymbal hits so the top line beams into clean runs (simple/standard on, full stays faithful) -> far fewer isolated notes" >/dev/null 2>&1
 echo "COMMIT_EXIT=$?" > /mnt/e/projects/audio-jam/g.txt
 export GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=accept-new"
 git push origin main >> /mnt/e/projects/audio-jam/g.txt 2>&1

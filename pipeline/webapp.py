@@ -19,7 +19,7 @@ import time
 import traceback
 import uuid
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Request
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Form
 from fastapi.responses import HTMLResponse, FileResponse, Response, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -147,9 +147,12 @@ def worker(job_id, audio_path):
             bpm = pl.estimate_bpm(drums)
             add_log(job_id, "estimated bpm = " + str(bpm))
             with LOCK:
-                fname = JOBS.get(job_id, {}).get("filename") or ""
+                j0 = JOBS.get(job_id, {})
+                fname = j0.get("filename") or ""
+                difficulty = j0.get("difficulty") or "standard"
             title = os.path.splitext(os.path.basename(fname))[0] or None
-            xml = pl.to_musicxml(mid, jd, bpm=bpm, title=title)
+            add_log(job_id, "difficulty = " + difficulty)
+            xml = pl.to_musicxml(mid, jd, bpm=bpm, title=title, difficulty=difficulty)
             set_job(job_id, progress=85, stage="render")
             add_log(job_id, "STAGE 4/4 render (verovio + cairosvg)")
             svg, pdf, png = pl.render(xml, jd)
@@ -166,10 +169,12 @@ def worker(job_id, audio_path):
 
 
 @app.post("/api/upload")
-async def upload(file: UploadFile = File(...)):
+async def upload(file: UploadFile = File(...), difficulty: str = Form("standard")):
     ext = os.path.splitext(file.filename or "")[1].lower()
     if ext not in AUDIO_EXT:
         raise HTTPException(400, "unsupported audio type: " + ext)
+    if difficulty not in ("simple", "standard", "full"):
+        difficulty = "standard"
     job_id = uuid.uuid4().hex[:12]
     jd = os.path.join(JOBS_DIR, job_id)
     os.makedirs(jd, exist_ok=True)
@@ -179,7 +184,7 @@ async def upload(file: UploadFile = File(...)):
     with LOCK:
         JOBS[job_id] = {"status": "queued", "progress": 0, "stage": "queued",
                         "logs": [], "outputs": {}, "filename": file.filename,
-                        "created": time.time()}
+                        "difficulty": difficulty, "created": time.time()}
     threading.Thread(target=worker, args=(job_id, audio_path), daemon=True).start()
     return {"job_id": job_id}
 

@@ -156,6 +156,13 @@
             <input type="file" id="audioFile" accept=".wav,.mp3,.flac,.ogg,.m4a">
           </label>
           <div class="fname" id="fname"></div>
+          <div class="frow" style="margin-top:12px"><label style="font-size:13px;color:var(--txt);font-weight:600">谱面难度</label></div>
+          <div class="seg" style="margin-top:6px">
+            <button id="diff-simple" onclick="pickDiff('simple')">简单</button>
+            <button id="diff-standard" class="on" onclick="pickDiff('standard')">标准</button>
+            <button id="diff-full" onclick="pickDiff('full')">完整</button>
+          </div>
+          <div class="note" id="diffDesc"></div>
           <button class="btn mt" id="btnUpload" onclick="startUpload()">开始处理</button>
         </div>
 
@@ -257,6 +264,17 @@
 <script>
 let mode='gen';
 let uploadTitle='';
+let difficulty='standard';
+const DIFF_DESC={
+  simple:'简单：量化到 8 分音符（更粗的节奏网格，去掉密集的 16 分音符碎点）；只保留 底鼓 / 军鼓 / 踩镲 三大件，嗵鼓与吊镲/叮叮镲被省略或并到主件。谱面最清爽，适合初学跟练。',
+  standard:'标准：量化到 16 分音符；保留 底鼓/军鼓/踩镲 + 叮叮镲/吊镲/嗵鼓，省略少见的副镲(splash/china)。接近常见扒谱难度。',
+  full:'完整：量化到 16 分音符；保留 AI 识别出的全部鼓件（所有嗵鼓、各种镲），最还原，但也最密集复杂。'
+};
+function pickDiff(d){
+  difficulty=d;
+  ['simple','standard','full'].forEach(k=>document.getElementById('diff-'+k).classList.toggle('on',k===d));
+  document.getElementById('diffDesc').textContent=DIFF_DESC[d];
+}
 function setMode(m){
   mode=m;
   document.getElementById('m-gen').classList.toggle('on',m==='gen');
@@ -290,6 +308,7 @@ function wireDrop(dropId,inputId,nameId){
 }
 wireDrop('drop','audioFile','fname');
 wireDrop('dropImp','scoreFile','fnameImp');
+pickDiff('standard');   // init difficulty description
 
 /* ---------------- generate ---------------- */
 let pollTimer=null,currentJob=null;
@@ -305,7 +324,7 @@ async function startUpload(){
   document.getElementById('dlGrp').classList.add('hidden');
   document.getElementById('logBox').textContent='';
   setProgress(2,'上传中…'); setStatus('run','上传中…');
-  const fd=new FormData(); fd.append('file',f);
+  const fd=new FormData(); fd.append('file',f); fd.append('difficulty',difficulty);
   let r; try{ r=await fetch('/api/upload',{method:'POST',body:fd}); }
   catch(e){ alert('上传失败: '+e); btn.disabled=false; return; }
   if(!r.ok){ alert('上传失败: '+await r.text()); btn.disabled=false; return; }

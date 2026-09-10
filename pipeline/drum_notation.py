@@ -51,6 +51,27 @@ DEFAULT = ("C", 5, "normal")
 # feet go to Voice 2 (stems down); everything else to Voice 1 (stems up)
 FEET = {35, 36, 44}
 
+# --- difficulty presets ---
+# grid: quantize resolution (subdivisions per beat). 4=16th, 2=8th.
+# keep: which GM pitches to keep (None = keep all).
+# collapse: remap toms/extra cymbals down to core pieces for the simplest chart.
+CORE_KICK = {35, 36}
+CORE_SNARE = {38, 40, 37, 39}
+CORE_HAT = {42, 46, 44}
+CORE = CORE_KICK | CORE_SNARE | CORE_HAT
+# a "standard" set adds ride + crash but drops most toms/aux cymbals
+STANDARD_EXTRA = {49, 57, 51, 59, 53, 50, 48, 47, 45}
+
+DIFFICULTY = {
+    "simple":   {"grid": 2, "keep": CORE,                  "collapse": True},   # 8th grid, kick/snare/hat only
+    "standard": {"grid": 4, "keep": CORE | STANDARD_EXTRA, "collapse": False},  # 16th, + ride/crash/toms
+    "full":     {"grid": 4, "keep": None,                  "collapse": False},  # everything
+}
+
+# collapse map for simple mode: any tom -> a single mid tom voice-1 note; splash/china -> crash
+COLLAPSE = {41: 45, 43: 45, 47: 45, 48: 45, 50: 45, 45: 45,
+            55: 49, 52: 49, 57: 49, 59: 51}
+
 
 def _make_unpitched(pitch, ql, stem):
     step, octv, nh = DRUM_MAP.get(pitch, DEFAULT)
@@ -102,7 +123,7 @@ def _fill_voice(slots_for_voice, base, slots_per_measure, QL, stem):
     return v
 
 
-def build_drum_score(midi_path, bpm=None, max_measures=200, title=None):
+def build_drum_score(midi_path, bpm=None, max_measures=200, title=None, difficulty="standard"):
     pm = pretty_midi.PrettyMIDI(midi_path)
     if bpm is None:
         try:
@@ -113,16 +134,26 @@ def build_drum_score(midi_path, bpm=None, max_measures=200, title=None):
     if not bpm or bpm <= 0:
         bpm = 120.0
 
+    preset = DIFFICULTY.get(difficulty, DIFFICULTY["standard"])
+    subdiv = preset["grid"]          # subdivisions per beat (4=16th, 2=8th)
+    keep = preset["keep"]            # set of pitches to keep, or None for all
+    collapse = preset["collapse"]
+
     events = []
     for inst in pm.instruments:
         for n in inst.notes:
-            events.append((float(n.start), int(n.pitch)))
+            p = int(n.pitch)
+            if collapse and p in COLLAPSE:
+                p = COLLAPSE[p]
+            if keep is not None and p not in keep:
+                continue
+            events.append((float(n.start), p))
     events.sort()
 
     sec_per_beat = 60.0 / bpm
-    grid = sec_per_beat / 4.0
-    slots_per_measure = 16
-    QL = 0.25
+    grid = sec_per_beat / subdiv                 # seconds per grid step
+    slots_per_measure = 4 * subdiv               # 4/4
+    QL = 1.0 / subdiv                            # quarterLength of one grid step
 
     # split into hand (voice1) / foot (voice2) buckets, keyed by absolute 16th slot
     hands = {}

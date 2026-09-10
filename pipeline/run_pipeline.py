@@ -83,12 +83,12 @@ def estimate_bpm(drums_wav):
         return None
 
 
-def to_musicxml(mid, outdir, bpm=None, title=None):
+def to_musicxml(mid, outdir, bpm=None, title=None, difficulty="standard"):
     # Build proper drum-set notation (percussion clef, unpitched notes at standard
     # staff positions, x-noteheads for cymbals/hi-hat) instead of plain pitched notes.
     import drum_notation
     xml = os.path.join(outdir, "drums.musicxml")
-    sc = drum_notation.build_drum_score(mid, bpm=bpm, title=title)
+    sc = drum_notation.build_drum_score(mid, bpm=bpm, title=title, difficulty=difficulty)
     from music21.musicxml import m21ToXml
     data = m21ToXml.GeneralObjectExporter(sc).parse()
     with open(xml, "wb") as fh:

@@ -412,24 +412,44 @@ function clearHighlight(){
   for(const id of hlIds){ const el=document.getElementById(id); if(el) el.classList.remove('aj-hl'); }
   hlIds=[];
 }
+let lastScrollT=0;
 function highlightAt(ms){
   if(!timemap.length) return;
-  // find last entry with t <= ms (binary search)
   let lo=0,hi=timemap.length-1,idx=-1;
   while(lo<=hi){ const m=(lo+hi)>>1; if(timemap[m].t<=ms){ idx=m; lo=m+1; } else hi=m-1; }
-  if(idx<0){ clearHighlight(); return; }
+  if(idx<0){ if(hlIds.length) clearHighlight(); return; }
   const ids=timemap[idx].on;
-  // only update DOM if changed
-  if(ids.length===hlIds.length && ids.every((v,i)=>v===hlIds[i])) return;
+  if(ids.length===hlIds.length && ids.every((v,i)=>v===hlIds[i])) return; // unchanged
   clearHighlight();
   let firstEl=null;
   for(const id of ids){ const el=document.getElementById(id); if(el){ el.classList.add('aj-hl'); hlIds.push(id); if(!firstEl) firstEl=el; } }
-  if(firstEl){ try{ firstEl.scrollIntoView({block:'center',inline:'nearest',behavior:'smooth'}); }catch(e){} }
+  // keep current note in view, but cheaply: instant scroll, only if off-screen, throttled
+  if(firstEl){
+    const now=performance.now();
+    if(now-lastScrollT>400){
+      const box=document.querySelector('.stage');
+      if(box){
+        const br=box.getBoundingClientRect(), er=firstEl.getBoundingClientRect();
+        if(er.top<br.top+60 || er.bottom>br.bottom-60){
+          box.scrollTop += (er.top - br.top) - box.clientHeight*0.35;
+          lastScrollT=now;
+        }
+      }
+    }
+  }
 }
 function midiPlayMs(){
-  // current MIDI play position in ms (for highlight)
   const mp=activeMp; return ((mp&&mp.currentTime)||0)*1000;
 }
+
+/* rAF loop drives smooth highlight without touching the audio path */
+let rafId=null;
+function startHlLoop(){
+  stopHlLoop();
+  const step=()=>{ highlightAt(midiPlayMs()); rafId=requestAnimationFrame(step); };
+  rafId=requestAnimationFrame(step);
+}
+function stopHlLoop(){ if(rafId){ cancelAnimationFrame(rafId); rafId=null; } }
 let seeking=false,progTimer=null,activeMp=null,activeSeek='seekBar',hasOrig=true;
 function curDur(){
   const a=document.getElementById('origAudio');
@@ -449,7 +469,6 @@ function tick(){
   document.getElementById('tCur').textContent=fmtTime(cur);
   document.getElementById('tDur').textContent=fmtTime(dur);
   document.getElementById('seekBar').value=dur>0?Math.round(cur/dur*1000):0;
-  highlightAt(midiPlayMs());
 }
 function onSeekInput(){ seeking=true; const {dur}=curDur();
   document.getElementById('tCur').textContent=fmtTime(+document.getElementById('seekBar').value/1000*dur); }
@@ -461,7 +480,7 @@ function setPlay(on){ const b=document.getElementById('btnPlay'); b.textContent=
 function onPlayClick(){ if(mode==='gen') togglePlay(); else toggleImpPlay(); }
 async function togglePlay(){
   const mp=document.getElementById('mp'), a=document.getElementById('origAudio'), b=document.getElementById('btnPlay');
-  if(b.dataset.playing==='1'){ try{mp.stop();}catch(e){} a.pause(); setPlay(false); clearHighlight(); return; }
+  if(b.dataset.playing==='1'){ try{mp.stop();}catch(e){} a.pause(); setPlay(false); stopHlLoop(); clearHighlight(); return; }
   try{ if(window.Tone) await Tone.start(); }catch(e){}
   const g=ensureAudioGraph(); try{ if(g&&g.ctx.state==='suspended') await g.ctx.resume(); }catch(e){}
   applyVolumes();
@@ -470,10 +489,10 @@ async function togglePlay(){
   try{ await a.play(); }catch(e){}
   // apply alignment offset: MIDI position = audioTime - offset
   try{ mp.currentTime = Math.max(0, -offsetMs/1000); }catch(e){}
-  setPlay(true);
+  setPlay(true); startHlLoop();
 }
 function stopAll(){ const mp=document.getElementById('mp'),a=document.getElementById('origAudio');
-  try{mp.stop();}catch(e){} a.pause(); a.currentTime=0; setPlay(false); }
+  try{mp.stop();}catch(e){} a.pause(); a.currentTime=0; setPlay(false); stopHlLoop(); clearHighlight(); }
 
 /* ---------------- import ---------------- */
 let currentImp=null;
@@ -508,11 +527,11 @@ function wireProgressImp(){
 }
 async function toggleImpPlay(){
   const mp=document.getElementById('mpImp'),b=document.getElementById('btnPlay');
-  if(b.dataset.playing==='1'){ try{mp.stop();}catch(e){} setPlay(false); clearHighlight(); return; }
+  if(b.dataset.playing==='1'){ try{mp.stop();}catch(e){} setPlay(false); stopHlLoop(); clearHighlight(); return; }
   try{ if(window.Tone) await Tone.start(); }catch(e){}
-  applyImpVol(); try{ await mp.start(); }catch(e){} setPlay(true);
+  applyImpVol(); try{ await mp.start(); }catch(e){} setPlay(true); startHlLoop();
 }
-function stopImp(){ const mp=document.getElementById('mpImp'); try{mp.stop();}catch(e){} clearHighlight(); }
+function stopImp(){ const mp=document.getElementById('mpImp'); try{mp.stop();}catch(e){} stopHlLoop(); clearHighlight(); }
 function applyImpVol(){ const v=+document.getElementById('volImp').value;
   document.getElementById('volImpVal').textContent=v;
   try{ if(window.Tone) Tone.getDestination().volume.value=pctToDb(v); }catch(e){} }

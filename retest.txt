@@ -1,9 +1,0 @@
-job=72278565d3ea
-final=done
-logs:
-  STAGE 1/4 separation (Demucs)
-  STAGE 2/4 transcription (ADTOF)
-  STAGE 3/4 MIDI -> MusicXML (music21)
-  estimated bpm = 99.38
-  STAGE 4/4 render (verovio + cairosvg)
-  done

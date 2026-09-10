@@ -22,7 +22,11 @@ def log(msg):
 
 def run(cmd):
     log("run: " + " ".join(cmd))
-    subprocess.run(cmd, check=True)
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    if proc.returncode != 0:
+        tail = "\n".join((proc.stdout or "").splitlines()[-25:])
+        log("command failed (exit %d):\n%s" % (proc.returncode, tail))
+        raise subprocess.CalledProcessError(proc.returncode, cmd, output=proc.stdout)
 
 
 def _run_with_cpu_fallback(build_cmd, device):

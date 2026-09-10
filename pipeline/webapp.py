@@ -39,6 +39,7 @@ if os.path.isdir(STATIC_DIR):
 # in-memory job registry
 JOBS = {}
 LOCK = threading.Lock()
+PROC_LOCK = threading.Lock()  # serialize heavy GPU/CPU processing across jobs
 
 AUDIO_EXT = {".wav", ".mp3", ".flac", ".ogg", ".m4a"}
 MIDI_EXT = {".mid", ".midi"}
@@ -75,29 +76,32 @@ def render_svg(xml_path, out_svg):
 
 def worker(job_id, audio_path):
     jd = os.path.join(JOBS_DIR, job_id)
-    try:
-        set_job(job_id, status="running", progress=5, stage="separation")
-        add_log(job_id, "STAGE 1/4 separation (Demucs)")
-        drums = pl.separate(audio_path, jd, DEVICE)
-        set_job(job_id, progress=45, stage="transcription")
-        add_log(job_id, "STAGE 2/4 transcription (ADTOF)")
-        mid = pl.transcribe(drums, jd, DEVICE)
-        set_job(job_id, progress=70, stage="musicxml")
-        add_log(job_id, "STAGE 3/4 MIDI -> MusicXML (music21)")
-        bpm = pl.estimate_bpm(drums)
-        add_log(job_id, "estimated bpm = " + str(bpm))
-        xml = pl.to_musicxml(mid, jd, bpm=bpm)
-        set_job(job_id, progress=85, stage="render")
-        add_log(job_id, "STAGE 4/4 render (verovio + cairosvg)")
-        svg, pdf, png = pl.render(xml, jd)
-        add_log(job_id, "done")
-        set_job(job_id, status="done", progress=100, stage="done",
-                outputs={"midi": mid, "musicxml": xml, "svg": svg, "pdf": pdf,
-                         "png": png, "original": audio_path, "drums": drums})
-    except Exception as e:
-        add_log(job_id, "ERROR: " + repr(e))
-        add_log(job_id, traceback.format_exc())
-        set_job(job_id, status="error", stage="error")
+    # serialize heavy processing: only one job separates/transcribes at a time
+    # (prevents GPU OOM / CPU thrash from concurrent demucs runs).
+    with PROC_LOCK:
+        try:
+            set_job(job_id, status="running", progress=5, stage="separation")
+            add_log(job_id, "STAGE 1/4 separation (Demucs)")
+            drums = pl.separate(audio_path, jd, DEVICE)
+            set_job(job_id, progress=45, stage="transcription")
+            add_log(job_id, "STAGE 2/4 transcription (ADTOF)")
+            mid = pl.transcribe(drums, jd, DEVICE)
+            set_job(job_id, progress=70, stage="musicxml")
+            add_log(job_id, "STAGE 3/4 MIDI -> MusicXML (music21)")
+            bpm = pl.estimate_bpm(drums)
+            add_log(job_id, "estimated bpm = " + str(bpm))
+            xml = pl.to_musicxml(mid, jd, bpm=bpm)
+            set_job(job_id, progress=85, stage="render")
+            add_log(job_id, "STAGE 4/4 render (verovio + cairosvg)")
+            svg, pdf, png = pl.render(xml, jd)
+            add_log(job_id, "done")
+            set_job(job_id, status="done", progress=100, stage="done",
+                    outputs={"midi": mid, "musicxml": xml, "svg": svg, "pdf": pdf,
+                             "png": png, "original": audio_path, "drums": drums})
+        except Exception as e:
+            add_log(job_id, "ERROR: " + repr(e))
+            add_log(job_id, traceback.format_exc())
+            set_job(job_id, status="error", stage="error")
 
 
 @app.post("/api/upload")
